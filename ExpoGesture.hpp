@@ -1,6 +1,9 @@
 #pragma once
 
 #include <hyprland/src/managers/input/trackpad/gestures/ITrackpadGesture.hpp>
+#include <hyprland/src/desktop/DesktopTypes.hpp>
+
+class COverview;
 
 class CExpoGesture : public ITrackpadGesture {
   public:
@@ -12,6 +15,11 @@ class CExpoGesture : public ITrackpadGesture {
     virtual void end(const ITrackpadGesture::STrackpadGestureEnd& e);
 
   private:
-    float m_lastDelta   = 0.F;
-    bool  m_firstUpdate = false;
+    COverview*    overview() const;
+
+    // Monitor the gesture started on, so update/end keep driving the same
+    // overview even when other monitors have one open too.
+    PHLMONITORREF m_monitor;
+    float         m_lastDelta   = 0.F;
+    bool          m_firstUpdate = false;
 };

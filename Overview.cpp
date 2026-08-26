@@ -14,6 +14,7 @@
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <hyprland/src/config/shared/animation/AnimationTree.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/space/Space.hpp>
@@ -359,7 +360,8 @@ SP<Render::ITexture> renderNumberTexture(const std::string& text, const CHyprCol
 }
 
 static void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
-    g_pOverview->damage();
+    if (auto* const OV = overviewForAnimVar(thisptr))
+        OV->damage();
 }
 
 SWorkspacePreviewState applyWorkspacePreviewState(const PHLWORKSPACE& workspace) {
@@ -619,12 +621,106 @@ void restoreActiveWorkspaceAfterPreview(PHLMONITOR monitor, const PHLWORKSPACE& 
     recalculateWorkspaceLayout(workspace);
 }
 
-void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
-    if (!g_pOverview)
+bool COverview::ownsAnimVar(const WP<Hyprutils::Animation::CBaseAnimatedVariable>& var) const {
+    // Animated variables live in CUniquePointers, and locking a CWeakPointer
+    // over a unique pointer asserts. get() reads the raw pointer without that
+    // check, and CGenericAnimatedVariable derives from CBaseAnimatedVariable
+    // through plain single inheritance, so the addresses compare directly.
+    const Hyprutils::Animation::CBaseAnimatedVariable* const RAW = var.get();
+    if (!RAW)
+        return false;
+
+    return RAW == size.get() || RAW == pos.get();
+}
+
+COverview* overviewForAnimVar(const WP<Hyprutils::Animation::CBaseAnimatedVariable>& var) {
+    for (const auto& OV : g_overviews) {
+        if (OV->ownsAnimVar(var))
+            return OV.get();
+    }
+
+    return nullptr;
+}
+
+COverview* overviewForMonitor(const PHLMONITOR& monitor) {
+    if (!monitor)
+        return nullptr;
+
+    for (const auto& OV : g_overviews) {
+        if (OV->pMonitor == monitor)
+            return OV.get();
+    }
+
+    return nullptr;
+}
+
+COverview* createOverview(const PHLMONITOR& monitor, bool swipe) {
+    if (!monitor || !monitor->m_activeWorkspace)
+        return nullptr;
+
+    if (overviewForMonitor(monitor))
+        return nullptr;
+
+    g_overviews.push_back(std::make_unique<COverview>(monitor->m_activeWorkspace, monitor, swipe));
+    return g_overviews.back().get();
+}
+
+bool overviewOpen() {
+    return !g_overviews.empty();
+}
+
+COverview* activeOverview() {
+    if (g_overviews.empty())
+        return nullptr;
+
+    if (g_overviews.size() == 1)
+        return g_overviews.front().get();
+
+    const auto FOCUS = Desktop::focusState();
+    if (auto* const FOCUSED = FOCUS ? overviewForMonitor(FOCUS->monitor()) : nullptr)
+        return FOCUSED;
+
+    if (auto* const HOVERED = overviewForMonitor(State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run()))
+        return HOVERED;
+
+    return g_overviews.front().get();
+}
+
+void forEachOverview(const std::function<void(COverview&)>& fn) {
+    std::vector<COverview*> snapshot;
+    snapshot.reserve(g_overviews.size());
+    for (const auto& OV : g_overviews)
+        snapshot.push_back(OV.get());
+
+    for (auto* const OV : snapshot) {
+        // fn may tear down overviews, including this one. Skip dead entries
+        // instead of dereferencing a pointer the callback already freed.
+        const bool ALIVE = std::any_of(g_overviews.begin(), g_overviews.end(), [OV](const auto& entry) { return entry.get() == OV; });
+        if (!ALIVE)
+            continue;
+
+        fn(*OV);
+    }
+}
+
+void destroyOverview(COverview* overview) {
+    if (!overview)
         return;
 
-    const auto MON = g_pOverview->pMonitor.lock();
-    g_pOverview.reset();
+    std::erase_if(g_overviews, [overview](const auto& entry) { return entry.get() == overview; });
+}
+
+void destroyAllOverviews() {
+    g_overviews.clear();
+}
+
+void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
+    auto* const OV = overviewForAnimVar(thisptr);
+    if (!OV)
+        return;
+
+    const auto MON = OV->pMonitor.lock();
+    destroyOverview(OV);
 
     if (!MON)
         return;
@@ -739,8 +835,8 @@ COverview::~COverview() {
     resetSubmapIfNeeded();
 }
 
-COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn_), swipe(swipe_) {
-    const auto PMONITOR = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run();
+COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor_, bool swipe_) : startedOn(startedOn_), swipe(swipe_) {
+    const auto PMONITOR = monitor_;
     pMonitor            = PMONITOR;
 
     static auto* const* PCOLUMNS  = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprexpo:columns")->getDataStaticPtr();

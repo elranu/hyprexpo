@@ -11,6 +11,8 @@
 #include <hyprland/src/helpers/signal/Signal.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <chrono>
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -20,7 +22,9 @@ constexpr bool ENABLE_LOWRES = false;
 
 class COverview {
   public:
-    COverview(PHLWORKSPACE startedOn_, bool swipe = false);
+    // The monitor is passed in rather than resolved from the cursor: with
+    // several overviews alive they would all bind to the same output.
+    COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor_, bool swipe = false);
     ~COverview();
 
     void render();
@@ -36,6 +40,9 @@ class COverview {
         return m_closeCommitted;
     }
     bool shouldRenderOverviewForMonitor(const PHLMONITOR& monitor) const;
+    // Animation callbacks are handed the variable that fired, not the owner.
+    // With several overviews alive the owner has to be resolved from it.
+    bool ownsAnimVar(const WP<Hyprutils::Animation::CBaseAnimatedVariable>& var) const;
     void onWindowMoveToWorkspace(const PHLWINDOW& window, const PHLWORKSPACE& workspace);
 
     void resetSwipe();
@@ -168,4 +175,36 @@ class COverview {
     friend class COverviewPassElement;
 };
 
-inline std::unique_ptr<COverview> g_pOverview;
+// Overview instances, one per monitor currently showing the overview. A single
+// monitor invocation keeps exactly one entry; "all monitors" mode keeps one per
+// output. Instances are owned here and torn down via destroyOverview().
+inline std::vector<std::unique_ptr<COverview>> g_overviews;
+
+// The instance that owns keyboard input and unqualified dispatcher commands:
+// the one on the focused monitor, else the one under the cursor, else the
+// first. nullptr when no overview is open.
+COverview* activeOverview();
+
+// The instance owning an animated variable, or nullptr.
+COverview* overviewForAnimVar(const WP<Hyprutils::Animation::CBaseAnimatedVariable>& var);
+
+// The instance rendering on a specific monitor, or nullptr.
+COverview* overviewForMonitor(const PHLMONITOR& monitor);
+
+// Create an overview on a monitor and register it. Returns nullptr if the
+// monitor already has one, or if the arguments are unusable.
+COverview* createOverview(const PHLMONITOR& monitor, bool swipe = false);
+
+// True while at least one overview is alive.
+bool       overviewOpen();
+
+// Run fn for every live overview. Safe when the callback destroys overviews:
+// entries torn down mid-iteration are skipped.
+void       forEachOverview(const std::function<void(COverview&)>& fn);
+
+// Destroy one instance. This deletes the object, so a member function
+// destroying itself must return immediately afterwards.
+void       destroyOverview(COverview* overview);
+
+// Destroy every instance.
+void       destroyAllOverviews();

@@ -356,7 +356,7 @@ void COverview::redrawDraggedWindowTiles(int source, int target) {
     redrawSettleTimer = makeShared<CEventLoopTimer>(
         75ms,
         [this](SP<CEventLoopTimer> self, void*) {
-            if (!g_pOverview || g_pOverview.get() != this || closing) {
+            if (!overviewOpen() || activeOverview() != this || closing) {
                 self->cancel();
                 redrawSettleTimer.reset();
                 return;
@@ -626,7 +626,7 @@ void COverview::onSwipeEnd() {
         m_isSwiping       = false;
         swipeWasCommenced = false;
         closing           = true;
-        g_pOverview.reset();
+        destroyOverview(this);
         return;
     }
 
@@ -651,18 +651,31 @@ void COverview::onSwipeEnd() {
     m_isSwiping       = false;
 }
 
+// The submap is compositor-global, but every overview enters and leaves it
+// independently. Refcount it so opening on several monitors installs it once
+// and only the last overview to close tears it down: without this the first
+// monitor to close would drop keyboard navigation for the ones still open.
+static int g_submapRefs = 0;
+
 void COverview::enterSubmapIfEnabled() {
     static auto* const* PKEYNAV = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprexpo:keynav_enable")->getDataStaticPtr();
-    if (**PKEYNAV && !submapActive) {
+    if (!**PKEYNAV || submapActive)
+        return;
+
+    submapActive = true;
+    if (g_submapRefs++ == 0) {
         // switch to a dedicated submap for hyprexpo navigation
         (void)Config::Actions::setSubmap("hyprexpo");
-        submapActive = true;
     }
 }
 
 void COverview::resetSubmapIfNeeded() {
-    if (submapActive) {
+    if (!submapActive)
+        return;
+
+    submapActive = false;
+    if (--g_submapRefs <= 0) {
+        g_submapRefs = 0;
         (void)Config::Actions::setSubmap("reset");
-        submapActive = false;
     }
 }

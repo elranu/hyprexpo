@@ -59,8 +59,8 @@ int main() {
     const auto function = extractFunction(source, "void removeOverview(");
     expect(!function.empty(), "removeOverview function exists");
 
-    const auto lockPos     = function.find("const auto MON = g_pOverview->pMonitor.lock();");
-    const auto resetPos    = function.find("g_pOverview.reset();");
+    const auto lockPos     = function.find("const auto MON = OV->pMonitor.lock();");
+    const auto resetPos    = function.find("destroyOverview(OV);");
     const auto damagePos   = function.find("g_pHyprRenderer->damageMonitor(MON);");
     const auto schedulePos = function.find("MON->scheduleFrame();");
 
@@ -97,7 +97,7 @@ int main() {
 
     const auto numberKeyDispatcher = extractFunction(dispatchersSource, "static SDispatchResult changeToSingleDigitWorkspace(const std::string& arg) {");
     expect(!numberKeyDispatcher.empty(), "number-key dispatcher function exists");
-    expect(numberKeyDispatcher.find("g_pOverview->selectWorkspaceByID(workspaceID)") != std::string::npos,
+    expect(numberKeyDispatcher.find("OV->selectWorkspaceByID(workspaceID)") != std::string::npos,
            "workspace-mode raw number keys preserve workspace-ID selection");
 
     const auto rawNumberSelection = extractFunction(dispatchersSource, "bool shouldSelectWorkspaceFromKey(const IKeyboard::SKeyEvent& event) {");
@@ -119,7 +119,7 @@ int main() {
                rawNumberSelection.substr(passthroughMode, indexMode - passthroughMode).find("return false;") != std::string::npos,
            "passthrough mode leaves raw number keys uncancelled");
     expect(indexMode != std::string::npos && workspaceMode != std::string::npos &&
-               rawNumberSelection.substr(indexMode, workspaceMode - indexMode).find("g_pOverview->onKbSelectToken(visibleIndex)") != std::string::npos &&
+               rawNumberSelection.substr(indexMode, workspaceMode - indexMode).find("OV->onKbSelectToken(visibleIndex)") != std::string::npos &&
                rawNumberSelection.substr(indexMode, workspaceMode - indexMode).find("return true;") != std::string::npos,
            "index mode selects from active-overview visible tile positions");
     expect(workspaceMode != std::string::npos,
@@ -140,20 +140,20 @@ int main() {
 
     const auto numberDispatcher = extractFunction(dispatchersSource, "static SDispatchResult onKbSelectNumberDispatcher(std::string arg) {");
     const auto indexDispatcher  = extractFunction(dispatchersSource, "static SDispatchResult onKbSelectIndexDispatcher(std::string arg) {");
-    expect(numberDispatcher.find("g_pOverview->onKbSelectNumber(num)") != std::string::npos,
+    expect(numberDispatcher.find("OV->onKbSelectNumber(num)") != std::string::npos,
            "kb_selectn keeps routing to workspace-number selection");
-    expect(indexDispatcher.find("g_pOverview->onKbSelectToken(idx - 1)") != std::string::npos,
+    expect(indexDispatcher.find("OV->onKbSelectToken(idx - 1)") != std::string::npos,
            "kb_selecti keeps routing to one-based visible-index selection");
 
     const auto toggleStart = expoDispatcher.find("if (arg == \"toggle\")");
     const auto cancelStart = expoDispatcher.find("if (arg == \"cancel\")", toggleStart);
     const auto toggleBlock = toggleStart == std::string::npos || cancelStart == std::string::npos ? std::string{} : expoDispatcher.substr(toggleStart, cancelStart - toggleStart);
-    expect(toggleBlock.find("g_pOverview->close(false);") != std::string::npos, "plain toggle close does not select a fallback workspace");
+    expect(toggleBlock.find("closeOverviews(false);") != std::string::npos, "plain toggle close does not select a fallback workspace");
 
     const auto offStart = expoDispatcher.find("if (arg == \"off\" || arg == \"close\" || arg == \"disable\")");
-    const auto offEnd   = expoDispatcher.find("\n    if (g_pOverview)\n        return {};", offStart);
+    const auto offEnd   = expoDispatcher.find("\n    if (overviewOpen())\n        return {};", offStart);
     const auto offBlock = offStart == std::string::npos || offEnd == std::string::npos ? std::string{} : expoDispatcher.substr(offStart, offEnd - offStart);
-    expect(offBlock.find("g_pOverview->close(false);") != std::string::npos, "plain off and close commands do not select a fallback workspace");
+    expect(offBlock.find("closeOverviews(false);") != std::string::npos, "plain off and close commands do not select a fallback workspace");
 
     const auto overviewConstructor = extractFunction(source, "COverview::COverview(");
     expect(!overviewConstructor.empty(), "overview constructor exists");
