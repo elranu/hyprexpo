@@ -16,6 +16,25 @@ bind = SUPER, g, hyprexpo:expo, toggle
 | `bring` | move the top mapped window from the hovered workspace into the current workspace |
 | `1`..`9` | select that workspace by ID while overview is open; otherwise dispatch a normal workspace switch |
 
+Append `all` to open on every monitor at once instead of only the one under the
+cursor. Each monitor renders its own grid, honoring per-monitor
+[workspace placement](../guides/multi-monitor).
+
+```ini
+bind = SUPER, g, hyprexpo:expo, toggle all
+```
+
+| option | description |
+| --- | --- |
+| `all` | shorthand for `toggle all` |
+| `toggle all` | show the overview on every monitor if hidden, hide it everywhere if shown |
+| `on all` or `enable all` | show the overview on every monitor |
+
+The qualifier only affects opening. `off`, `cancel` and `select` always apply to
+every open overview, so a single bind closes them all. Selecting a workspace
+applies only on the monitor you acted on; the others dismiss without changing
+their workspace.
+
 Keyboard navigation dispatchers are active during overview:
 
 | dispatcher | argument | description |

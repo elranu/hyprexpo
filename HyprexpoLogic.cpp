@@ -479,6 +479,18 @@ SWorkspaceMethodSpec parseWorkspaceMethodSpec(const std::string& method) {
     return spec;
 }
 
+SExpoCommand parseExpoCommand(const std::string& arg) {
+    const std::string TRIMMED = trimString(arg);
+
+    if (TRIMMED == "all")
+        return {.command = "toggle", .allMonitors = true};
+
+    if (TRIMMED.ends_with(" all"))
+        return {.command = trimString(TRIMMED.substr(0, TRIMMED.size() - 4)), .allMonitors = true};
+
+    return {.command = TRIMMED, .allMonitors = false};
+}
+
 SWorkspaceMethodSpec resolveWorkspaceMethodForMonitor(const std::string& config, const std::string& monitorName) {
     const std::string trimmed = trimString(config);
     if (trimmed.empty())

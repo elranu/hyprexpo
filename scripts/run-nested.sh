@@ -112,6 +112,7 @@ plugin {
 
 # toggle with an unmodified function key to avoid host grabs
 bind = , F10, hyprexpo:expo, toggle
+bind = , F11, hyprexpo:expo, toggle all
 
 # nested-session test controls
 bind = SUPER, Return, exec, $TERMINAL

@@ -40,6 +40,17 @@ struct SWorkspaceMethodSpec {
     std::string          error;
 };
 
+// Result of stripping an "all monitors" qualifier off an expo dispatcher arg.
+struct SExpoCommand {
+    std::string command;            // the arg with the qualifier removed
+    bool        allMonitors = false;
+};
+
+// Split "toggle all", "on all" or a bare "all" (which means "toggle all") into
+// the underlying command plus the all-monitors flag. Args without the
+// qualifier come back unchanged with allMonitors = false.
+SExpoCommand parseExpoCommand(const std::string& arg);
+
 struct SPoint {
     double x = 0.0;
     double y = 0.0;

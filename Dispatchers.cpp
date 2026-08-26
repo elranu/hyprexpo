@@ -190,11 +190,14 @@ static void closeOverviews(bool switchToSelection) {
     forEachOverview([switchToSelection](COverview& overview) { overview.close(switchToSelection); });
 }
 
-// Open on the monitor under the cursor.
-static void openOverviews() {
+// Open on every monitor, or just the one under the cursor.
+static void openOverviews(bool allMonitors) {
     renderingOverview = true;
 
-    if (const auto PMONITOR = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run())
+    if (allMonitors) {
+        for (const auto& MONITOR : State::monitorState()->monitors())
+            createOverview(MONITOR);
+    } else if (const auto PMONITOR = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run())
         createOverview(PMONITOR);
 
     renderingOverview = false;
@@ -455,7 +458,10 @@ static int luaGesture(lua_State* L) {
 }
 
 static SDispatchResult onExpoDispatcher(std::string arg) {
-    arg = lowerString(trimString(arg));
+    const auto COMMAND = Hyprexpo::parseExpoCommand(lowerString(trimString(arg)));
+
+    arg                     = COMMAND.command;
+    const bool ALL_MONITORS = COMMAND.allMonitors;
 
     if (auto* const OV = activeOverview(); OV && OV->m_isSwiping)
         return {.success = false, .error = "already swiping"};
@@ -485,7 +491,7 @@ static SDispatchResult onExpoDispatcher(std::string arg) {
         if (overviewOpen())
             closeOverviews(false);
         else
-            openOverviews();
+            openOverviews(ALL_MONITORS);
         return {};
     }
 
@@ -502,7 +508,7 @@ static SDispatchResult onExpoDispatcher(std::string arg) {
     if (overviewOpen())
         return {};
 
-    openOverviews();
+    openOverviews(ALL_MONITORS);
     return {};
 }
 

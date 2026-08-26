@@ -335,6 +335,38 @@ int main() {
     checkGeometryForMonitor(makeSize(900, 1600));
     checkGeometryForMonitor(makeSize(2560, 1080));
 
+    // --- "all monitors" qualifier on expo dispatcher args ---
+    {
+        const auto BARE = Hyprexpo::parseExpoCommand("all");
+        expect(BARE.allMonitors, "bare all targets every monitor");
+        expect(BARE.command == "toggle", "bare all means toggle all");
+
+        const auto TOGGLE = Hyprexpo::parseExpoCommand("toggle all");
+        expect(TOGGLE.allMonitors, "toggle all targets every monitor");
+        expect(TOGGLE.command == "toggle", "toggle all keeps the toggle command");
+
+        const auto ON = Hyprexpo::parseExpoCommand("on all");
+        expect(ON.allMonitors, "on all targets every monitor");
+        expect(ON.command == "on", "on all keeps the on command");
+
+        const auto PLAIN = Hyprexpo::parseExpoCommand("toggle");
+        expect(!PLAIN.allMonitors, "plain toggle stays single-monitor");
+        expect(PLAIN.command == "toggle", "plain toggle is unchanged");
+
+        const auto EMPTY = Hyprexpo::parseExpoCommand("");
+        expect(!EMPTY.allMonitors, "empty arg stays single-monitor");
+        expect(EMPTY.command.empty(), "empty arg stays empty");
+
+        const auto PADDED = Hyprexpo::parseExpoCommand("  toggle   all  ");
+        expect(PADDED.allMonitors, "surrounding whitespace does not hide the qualifier");
+        expect(PADDED.command == "toggle", "whitespace is trimmed off the command");
+
+        // "all" only counts as a qualifier on its own or as a trailing word.
+        const auto SUBSTRING = Hyprexpo::parseExpoCommand("install");
+        expect(!SUBSTRING.allMonitors, "a command merely ending in the letters all is not a qualifier");
+        expect(SUBSTRING.command == "install", "non-qualifier command is unchanged");
+    }
+
     if (failures != 0)
         return 1;
 
