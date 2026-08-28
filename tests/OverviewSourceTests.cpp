@@ -131,7 +131,7 @@ int main() {
 
     const auto interactionSource = readFile("OverviewInteraction.cpp");
     expect(!interactionSource.empty(), "OverviewInteraction.cpp can be read from repo root");
-    const auto numberSelection = extractFunction(interactionSource, "void COverview::onKbSelectNumber(int num) {");
+    const auto numberSelection = extractFunction(interactionSource, "bool COverview::onKbSelectNumber(int num) {");
     expect(!numberSelection.empty(), "workspace-number dispatcher selection function exists");
     expect(numberSelection.find("selectWorkspaceByID(num)") != std::string::npos,
            "kb_selectn remains workspace-ID based");
@@ -140,10 +140,10 @@ int main() {
 
     const auto numberDispatcher = extractFunction(dispatchersSource, "static SDispatchResult onKbSelectNumberDispatcher(std::string arg) {");
     const auto indexDispatcher  = extractFunction(dispatchersSource, "static SDispatchResult onKbSelectIndexDispatcher(std::string arg) {");
-    expect(numberDispatcher.find("OV->onKbSelectNumber(num)") != std::string::npos,
-           "kb_selectn keeps routing to workspace-number selection");
-    expect(indexDispatcher.find("OV->onKbSelectToken(idx - 1)") != std::string::npos,
-           "kb_selecti keeps routing to one-based visible-index selection");
+    expect(numberDispatcher.find("if (OV->onKbSelectNumber(num))") != std::string::npos && numberDispatcher.find("closeOverviewsSelecting(OV);") != std::string::npos,
+           "kb_selectn closes every overview only after successful workspace-number selection");
+    expect(indexDispatcher.find("if (OV->onKbSelectToken(idx - 1))") != std::string::npos && indexDispatcher.find("closeOverviewsSelecting(OV);") != std::string::npos,
+           "kb_selecti closes every overview only after successful visible-index selection");
 
     const auto toggleStart = expoDispatcher.find("if (arg == \"toggle\")");
     const auto cancelStart = expoDispatcher.find("if (arg == \"cancel\")", toggleStart);
@@ -154,6 +154,45 @@ int main() {
     const auto offEnd   = expoDispatcher.find("\n    if (overviewOpen())\n        return {};", offStart);
     const auto offBlock = offStart == std::string::npos || offEnd == std::string::npos ? std::string{} : expoDispatcher.substr(offStart, offEnd - offStart);
     expect(offBlock.find("closeOverviews(false);") != std::string::npos, "plain off and close commands do not select a fallback workspace");
+
+    const auto enableAllStart = expoDispatcher.find("if (ALL_MONITORS && (arg == \"on\" || arg == \"enable\"))");
+    const auto alreadyOpen    = expoDispatcher.find("if (overviewOpen())", enableAllStart);
+    expect(enableAllStart != std::string::npos && alreadyOpen != std::string::npos && enableAllStart < alreadyOpen,
+           "on all and enable all fill missing monitor entries before the already-open early return");
+    expect(toggleBlock.find("openOverviews(ALL_MONITORS);") != std::string::npos && toggleBlock.find("closeOverviews(false);") != std::string::npos,
+           "toggle all preserves close-when-any-open semantics");
+
+    const auto activeFunction = extractFunction(source, "COverview* activeOverview() {");
+    expect(activeFunction.find("g_keyboardOverviewMonitor.lock()") != std::string::npos && activeFunction.find("overviewForMonitor(KEYBOARD)") != std::string::npos,
+           "active overview honors a persistent explicit keyboard owner before compositor focus");
+    expect(source.find("bool overviewRegistered(const COverview* overview)") != std::string::npos,
+           "registry exposes exact overview liveness for delayed callbacks");
+
+    const auto moveFocus = extractFunction(interactionSource, "bool COverview::moveFocus(int dx, int dy) {");
+    const auto kbMove    = extractFunction(interactionSource, "bool COverview::onKbMoveFocus(const std::string& dir) {");
+    expect(!moveFocus.empty() && moveFocus.find("return true;") != std::string::npos && moveFocus.find("return false;") != std::string::npos,
+           "local focus movement reports whether it found a tile");
+    expect(kbMove.find("moveOverviewFocusAcrossMonitors(this") != std::string::npos,
+           "cross-monitor focus runs only after local movement fails");
+    expect(source.find("Hyprexpo::selectDirectionalTile(") != std::string::npos && source.find("g_keyboardOverviewMonitor = TARGET->pMonitor;") != std::string::npos,
+           "cross-monitor focus uses pure geometry and persists destination keyboard ownership");
+
+    expect(source.find("void closeOverviewsSelecting(COverview* selecting)") != std::string::npos &&
+               dispatchersSource.find("static void closeOverviewsSelecting(") == std::string::npos,
+           "one registry coordinator owns selector and peer closure");
+    expect(interactionSource.find("bool COverview::selectHoveredWorkspace()") != std::string::npos,
+           "pointer and touch selection can distinguish success from an invalid tile");
+
+    const auto resetDrag = extractFunction(source, "void resetOverviewDrag(");
+    expect(!resetDrag.empty(), "registry provides one centralized idempotent drag reset");
+    expect(resetDrag.find("transitionOverviewDrag(") != std::string::npos && resetDrag.find("\"left_ptr\"") != std::string::npos && resetDrag.find("damageMonitor") != std::string::npos,
+           "central drag reset clears pure state, restores left_ptr, and damages affected live monitors");
+    const auto destroyOne = extractFunction(source, "void destroyOverview(COverview* overview) {");
+    const auto destroyAll = extractFunction(source, "void destroyAllOverviews() {");
+    expect(destroyOne.find("resetOverviewDrag(") < destroyOne.find("std::erase_if("), "single-overview destruction resets drag before erasing ownership");
+    expect(destroyAll.find("resetOverviewDrag(") < destroyAll.find("g_overviews.clear();"), "all-overview destruction resets drag before clearing ownership");
+    expect(interactionSource.find("overviewRegistered(this)") != std::string::npos && interactionSource.find("activeOverview() != this") == std::string::npos,
+           "settle timer liveness uses exact registry membership instead of active ownership");
 
     const auto overviewConstructor = extractFunction(source, "COverview::COverview(");
     expect(!overviewConstructor.empty(), "overview constructor exists");
@@ -168,6 +207,9 @@ int main() {
     expect(!renderSource.empty(), "OverviewRender.cpp can be read from repo root");
     const auto fullRender = extractFunction(renderSource, "void COverview::fullRender(");
     expect(!fullRender.empty(), "overview fullRender function exists");
+    const auto closeFunction = extractFunction(renderSource, "void COverview::close(bool switchToSelection) {");
+    expect(closeFunction.find("MON->changeWorkspace(") != std::string::npos && closeFunction.find("Config::Actions::changeWorkspace(") == std::string::npos,
+           "selection switches the workspace through the overview's owning monitor");
     expect(fullRender.find("Hyprexpo::shouldShowWorkspaceLabel(") != std::string::npos,
            "runtime label rendering uses modern label_enable and label_show policy in every grid mode");
     expect(fullRender.find("if (!closing && (**PLABELEN || **PSELECTEN || showWorkspaceNumbers))") != std::string::npos,
