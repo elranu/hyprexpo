@@ -241,7 +241,7 @@ int main() {
     expect(interactionSource.find("activeOverview() != this") == std::string::npos,
            "settle timer liveness never depends on whichever overview currently owns keyboard input");
 
-    const auto redrawTimer = extractFunction(interactionSource, "void COverview::redrawDraggedWindowTile(int id) {");
+    const auto redrawTimer = extractFunction(interactionSource, "void COverview::redrawDraggedWorkspace(int64_t workspaceID) {");
     expect(redrawTimer.find("[this]") == std::string::npos,
            "settle timer callbacks never capture a raw overview pointer");
     expect(redrawTimer.find("const auto OVERVIEWKEY = overviewMonitorKey(") != std::string::npos && redrawTimer.find("[OVERVIEWKEY]") != std::string::npos &&
@@ -249,6 +249,8 @@ int main() {
            "settle timer callbacks re-resolve their overview by stable monitor key on every tick");
     expect(redrawTimer.find("OVERVIEW->redrawSettleTimer.get() != self.get()") != std::string::npos,
            "a timer cannot mutate a replacement overview registered on the same monitor");
+    expect(redrawTimer.find("settlingRedrawWorkspaceIDs") != std::string::npos && redrawTimer.find("OVERVIEW->tileForWorkspaceID(workspaceID)") != std::string::npos,
+           "every settle tick re-resolves the queued workspace identity to its current tile");
 
     const auto overviewDestructor = extractFunction(source, "COverview::~COverview() {");
     const auto cancelTimerPos     = overviewDestructor.find("redrawSettleTimer->cancel();");
@@ -273,8 +275,18 @@ int main() {
            "release rejects a target workspace that does not belong to the target overview monitor");
     expect(countOccurrences(finishDrag, "moveWindowToWorkspace(") == 1,
            "validated release moves the window exactly once");
-    expect(finishDrag.find("SOURCEOV->redrawDraggedWindowTile(") != std::string::npos && finishDrag.find("TARGETOV->redrawDraggedWindowTile(") != std::string::npos,
-           "source and destination thumbnails refresh independently");
+    const auto moveWindowPos    = finishDrag.find("moveWindowToWorkspace(");
+    const auto settleWindowPos  = finishDrag.find("settleWorkspaceMoveAnimation(", moveWindowPos);
+    const auto sourceCapturePos = finishDrag.find("SOURCEOV->redrawDraggedWorkspace(SOURCEWORKSPACEID)", settleWindowPos);
+    const auto targetCapturePos = finishDrag.find("TARGETOV->redrawDraggedWorkspace(TARGETWORKSPACEID)", settleWindowPos);
+    expect(moveWindowPos != std::string::npos && settleWindowPos != std::string::npos && sourceCapturePos != std::string::npos && targetCapturePos != std::string::npos &&
+               moveWindowPos < settleWindowPos && settleWindowPos < sourceCapturePos && settleWindowPos < targetCapturePos,
+           "source and destination workspace identities queue independent recaptures only after move animations settle");
+    expect(headerSource.find("settlingRedrawWorkspaceIDs") != std::string::npos && headerSource.find("settlingRedrawIDs") == std::string::npos,
+           "settled recapture state stores workspace identities instead of stale tile indices");
+    const auto flushRedraws = extractFunction(interactionSource, "void COverview::flushQueuedRedraws() {");
+    expect(flushRedraws.find("MON->scheduleFrame();") != std::string::npos,
+           "every completed framebuffer recapture schedules a compositor frame");
     expect(finishDrag.find("\"left_ptr\"") == std::string::npos,
            "release cannot restore the cursor outside centralized reset");
 
