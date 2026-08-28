@@ -122,8 +122,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto PKEY = Event::bus()->m_events.input.keyboard.key.listen([](IKeyboard::SKeyEvent event, Event::SCallbackInfo& info) {
         if (shouldCancelOverview(event)) {
             info.cancelled = true;
-            // Cancelling dismisses every open overview, not just the focused one.
-            forEachOverview([](COverview& overview) { overview.close(false); });
+            closeOverviews(false);
             return;
         }
 

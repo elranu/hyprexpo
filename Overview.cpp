@@ -654,6 +654,27 @@ COverview* overviewForMonitor(const PHLMONITOR& monitor) {
     return nullptr;
 }
 
+uint64_t overviewMonitorKey(const PHLMONITOR& monitor) {
+    return monitor ? static_cast<uint64_t>(monitor->m_id) + 1 : 0;
+}
+
+COverview* overviewForMonitorKey(uint64_t key) {
+    if (key == 0)
+        return nullptr;
+
+    for (const auto& OV : g_overviews) {
+        const auto MON = OV->pMonitor.lock();
+        if (overviewMonitorKey(MON) == key)
+            return OV.get();
+    }
+
+    return nullptr;
+}
+
+bool overviewRegistered(const COverview* overview) {
+    return overview && std::any_of(g_overviews.begin(), g_overviews.end(), [overview](const auto& entry) { return entry.get() == overview; });
+}
+
 COverview* createOverview(const PHLMONITOR& monitor, bool swipe) {
     if (!monitor || !monitor->m_activeWorkspace)
         return nullptr;
@@ -676,6 +697,10 @@ COverview* activeOverview() {
     if (g_overviews.size() == 1)
         return g_overviews.front().get();
 
+    const auto KEYBOARD = g_keyboardOverviewMonitor.lock();
+    if (auto* const OWNED = overviewForMonitor(KEYBOARD))
+        return OWNED;
+
     const auto FOCUS = Desktop::focusState();
     if (auto* const FOCUSED = FOCUS ? overviewForMonitor(FOCUS->monitor()) : nullptr)
         return FOCUSED;
@@ -684,6 +709,78 @@ COverview* activeOverview() {
         return HOVERED;
 
     return g_overviews.front().get();
+}
+
+std::optional<Hyprexpo::SGlobalTile> COverview::focusedGlobalTile() const {
+    const auto MON = pMonitor.lock();
+    if (!MON || !isTileValid(kbFocusID))
+        return std::nullopt;
+
+    const auto& BOX = images[kbFocusID].box;
+    return Hyprexpo::SGlobalTile{
+        .overviewKey   = overviewMonitorKey(MON),
+        .tileIndex     = kbFocusID,
+        .overviewGlobal = {MON->m_position.x, MON->m_position.y, MON->m_size.x, MON->m_size.y},
+        .tileGlobal     = {MON->m_position.x + BOX.x, MON->m_position.y + BOX.y, BOX.w, BOX.h},
+    };
+}
+
+std::vector<Hyprexpo::SGlobalTile> COverview::globalTiles() const {
+    std::vector<Hyprexpo::SGlobalTile> tiles;
+    const auto                         MON = pMonitor.lock();
+    if (!MON)
+        return tiles;
+
+    tiles.reserve(images.size());
+    for (size_t i = 0; i < images.size(); ++i) {
+        if (!isTileValid(i))
+            continue;
+        const auto& BOX = images[i].box;
+        tiles.push_back({
+            .overviewKey   = overviewMonitorKey(MON),
+            .tileIndex     = static_cast<int>(i),
+            .overviewGlobal = {MON->m_position.x, MON->m_position.y, MON->m_size.x, MON->m_size.y},
+            .tileGlobal     = {MON->m_position.x + BOX.x, MON->m_position.y + BOX.y, BOX.w, BOX.h},
+        });
+    }
+    return tiles;
+}
+
+bool COverview::setKeyboardFocus(int tileIndex) {
+    if (closing || !isTileValid(tileIndex))
+        return false;
+    kbFocusID = tileIndex;
+    damage();
+    return true;
+}
+
+bool moveOverviewFocusAcrossMonitors(COverview* source, Hyprexpo::EDirection direction) {
+    if (!overviewRegistered(source))
+        return false;
+
+    const auto SOURCE = source->focusedGlobalTile();
+    if (!SOURCE)
+        return false;
+
+    std::vector<Hyprexpo::SGlobalTile> candidates;
+    for (const auto& OV : g_overviews) {
+        if (OV.get() == source)
+            continue;
+        auto tiles = OV->globalTiles();
+        candidates.insert(candidates.end(), tiles.begin(), tiles.end());
+    }
+
+    const auto DESTINATION = Hyprexpo::selectDirectionalTile(SOURCE->tileGlobal, direction, candidates);
+    if (!DESTINATION)
+        return false;
+
+    auto* const TARGET = overviewForMonitorKey(DESTINATION->overviewKey);
+    if (!TARGET || !TARGET->setKeyboardFocus(DESTINATION->tileIndex))
+        return false;
+
+    g_keyboardOverviewMonitor = TARGET->pMonitor;
+    source->damage();
+    return true;
 }
 
 void forEachOverview(const std::function<void(COverview&)>& fn) {
@@ -703,14 +800,62 @@ void forEachOverview(const std::function<void(COverview&)>& fn) {
     }
 }
 
+static std::vector<uint64_t> liveOverviewMonitorKeys() {
+    std::vector<uint64_t> keys;
+    keys.reserve(g_overviews.size());
+    for (const auto& OV : g_overviews)
+        keys.push_back(overviewMonitorKey(OV->pMonitor.lock()));
+    return keys;
+}
+
+void resetOverviewDrag(Hyprexpo::EOverviewDragEventType type, uint64_t monitorKey) {
+    const auto transition = Hyprexpo::transitionOverviewDrag(g_overviewDrag.state, {.type = type, .monitorKey = monitorKey}, liveOverviewMonitorKeys());
+    g_overviewDrag.state  = transition.next;
+    if (!transition.cleanup)
+        return;
+
+    g_overviewDrag.window      = nullptr;
+    g_overviewDrag.pressGlobal = {};
+    g_overviewDrag.pointerGlobal = {};
+    g_overviewDrag.grabOffset  = {};
+    Pointer::Cursor::overrideController->setOverride("left_ptr", Pointer::Cursor::CURSOR_OVERRIDE_UNKNOWN);
+
+    for (const auto key : transition.cleanupMonitorKeys) {
+        auto* const OV = overviewForMonitorKey(key);
+        if (!OV)
+            continue;
+        OV->damage();
+        if (const auto MON = OV->pMonitor.lock())
+            g_pHyprRenderer->damageMonitor(MON);
+    }
+}
+
+void closeOverviewsSelecting(COverview* selecting) {
+    resetOverviewDrag(Hyprexpo::EOverviewDragEventType::AllClose);
+    g_keyboardOverviewMonitor.reset();
+    forEachOverview([selecting](COverview& overview) { overview.close(&overview == selecting); });
+}
+
+void closeOverviews(bool switchToSelection) {
+    resetOverviewDrag(Hyprexpo::EOverviewDragEventType::AllClose);
+    g_keyboardOverviewMonitor.reset();
+    forEachOverview([switchToSelection](COverview& overview) { overview.close(switchToSelection); });
+}
+
 void destroyOverview(COverview* overview) {
     if (!overview)
         return;
 
+    const auto MON = overview->pMonitor.lock();
+    resetOverviewDrag(Hyprexpo::EOverviewDragEventType::MonitorDestroyed, overviewMonitorKey(MON));
+    if (g_keyboardOverviewMonitor.lock() == MON)
+        g_keyboardOverviewMonitor.reset();
     std::erase_if(g_overviews, [overview](const auto& entry) { return entry.get() == overview; });
 }
 
 void destroyAllOverviews() {
+    resetOverviewDrag(Hyprexpo::EOverviewDragEventType::AllClose);
+    g_keyboardOverviewMonitor.reset();
     g_overviews.clear();
 }
 
@@ -1163,8 +1308,8 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor_, bool swipe_) 
         if (**PDRAGDROPENABLE && finishWindowDrag())
             return;
 
-        selectHoveredWorkspace();
-        close();
+        if (selectHoveredWorkspace())
+            closeOverviewsSelecting(this);
     };
 
     auto onTouchSelect = [this](Event::SCallbackInfo& info) {
@@ -1172,8 +1317,8 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor_, bool swipe_) 
             return;
 
         info.cancelled = true;
-        selectHoveredWorkspace();
-        close();
+        if (selectHoveredWorkspace())
+            closeOverviewsSelecting(this);
     };
 
     mouseMoveHook = Event::bus()->m_events.input.mouse.move.listen([onCursorMove](const Vector2D&, Event::SCallbackInfo& info) { onCursorMove(info); });

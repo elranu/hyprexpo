@@ -179,17 +179,6 @@ static SDispatchResult bringWindowFromWorkspace(int64_t sourceWorkspaceID) {
     return {};
 }
 
-// Close every open overview. Only `selecting` applies its own selection; the
-// others dismiss without changing their monitor's workspace, so acting on one
-// monitor does not silently switch the rest.
-static void closeOverviewsSelecting(COverview* selecting) {
-    forEachOverview([selecting](COverview& overview) { overview.close(&overview == selecting); });
-}
-
-static void closeOverviews(bool switchToSelection) {
-    forEachOverview([switchToSelection](COverview& overview) { overview.close(switchToSelection); });
-}
-
 // Open on every monitor, or just the one under the cursor.
 static void openOverviews(bool allMonitors) {
     renderingOverview = true;
@@ -290,8 +279,8 @@ bool shouldSelectWorkspaceFromKey(const IKeyboard::SKeyEvent& event) {
     if (mode == Hyprexpo::ENumberKeyMode::Index) {
         const int visibleIndex = Hyprexpo::numberKeyToVisibleIndex(arg[0] - '0');
         if (visibleIndex >= 0) {
-            if (auto* const OV = activeOverview())
-                OV->onKbSelectToken(visibleIndex);
+            if (auto* const OV = activeOverview(); OV && OV->onKbSelectToken(visibleIndex))
+                closeOverviewsSelecting(OV);
         }
         return true;
     }
@@ -471,15 +460,16 @@ static SDispatchResult onExpoDispatcher(std::string arg) {
 
     if (arg == "select") {
         if (auto* const OV = activeOverview()) {
-            OV->selectHoveredWorkspace();
-            closeOverviewsSelecting(OV);
+            if (OV->selectHoveredWorkspace())
+                closeOverviewsSelecting(OV);
         }
         return {};
     }
 
     if (arg == "bring") {
         if (auto* const OV = activeOverview()) {
-            OV->selectHoveredWorkspace();
+            if (!OV->selectHoveredWorkspace())
+                return {.success = false, .error = "no workspace under pointer"};
             const auto result = bringWindowFromWorkspace(OV->selectedWorkspaceID());
             closeOverviews(false);
             return result;
@@ -502,6 +492,11 @@ static SDispatchResult onExpoDispatcher(std::string arg) {
 
     if (arg == "off" || arg == "close" || arg == "disable") {
         closeOverviews(false);
+        return {};
+    }
+
+    if (ALL_MONITORS && (arg == "on" || arg == "enable")) {
+        openOverviews(true);
         return {};
     }
 
@@ -596,7 +591,8 @@ static SDispatchResult onKbConfirmDispatcher(std::string arg) {
     if (!OV)
         return {};
 
-    OV->onKbConfirm();
+    if (OV->onKbConfirm())
+        closeOverviewsSelecting(OV);
     return {};
 }
 
@@ -613,7 +609,8 @@ static SDispatchResult onKbSelectNumberDispatcher(std::string arg) {
     if (!parseStrictInteger(arg, num))
         return {.success = false, .error = "invalid number"};
 
-    OV->onKbSelectNumber(num);
+    if (OV->onKbSelectNumber(num))
+        closeOverviewsSelecting(OV);
     return {};
 }
 
@@ -639,7 +636,8 @@ static SDispatchResult onKbSelectIndexDispatcher(std::string arg) {
     if (idx <= 0)
         return {.success = false, .error = "invalid index (expected >= 1)"};
     // convert to 0-based visible index
-    OV->onKbSelectToken(idx - 1);
+    if (OV->onKbSelectToken(idx - 1))
+        closeOverviewsSelecting(OV);
     return {};
 }
 

@@ -16,12 +16,13 @@
 
 using namespace std::chrono_literals;
 
-void COverview::selectHoveredWorkspace() {
+bool COverview::selectHoveredWorkspace() {
     if (closing)
-        return;
+        return false;
 
     updateHoveredFromMouse();
     closeOnID = hoveredID >= 0 && hoveredID < (int)images.size() ? hoveredID : -1;
+    return closeOnID != -1;
 }
 
 int64_t COverview::selectedWorkspaceID() const {
@@ -356,7 +357,7 @@ void COverview::redrawDraggedWindowTiles(int source, int target) {
     redrawSettleTimer = makeShared<CEventLoopTimer>(
         75ms,
         [this](SP<CEventLoopTimer> self, void*) {
-            if (!overviewOpen() || activeOverview() != this || closing) {
+            if (!overviewRegistered(this) || closing) {
                 self->cancel();
                 redrawSettleTimer.reset();
                 return;
@@ -431,10 +432,10 @@ bool COverview::selectVisibleToken(const std::string& token) {
     return selectVisibleIndex(visibleIndex);
 }
 
-void COverview::moveFocus(int dx, int dy) {
+bool COverview::moveFocus(int dx, int dy) {
     ensureKbFocusInitialized();
     if (kbFocusID == -1)
-        return;
+        return false;
 
     const auto shape = currentGridShape();
     int x = kbFocusID % shape.cols;
@@ -461,7 +462,7 @@ void COverview::moveFocus(int dx, int dy) {
                 }
                 if (isTileValid(idx)) {
                     kbFocusID = idx;
-                    return;
+                    return true;
                 }
             }
         } else {
@@ -478,7 +479,7 @@ void COverview::moveFocus(int dx, int dy) {
                 const int nid = nx + y * shape.cols;
                 if (isTileValid(nid)) {
                     kbFocusID = nid;
-                    return;
+                    return true;
                 }
             }
         }
@@ -498,54 +499,69 @@ void COverview::moveFocus(int dx, int dy) {
             const int nid = x + ny * shape.cols;
             if (isTileValid(nid)) {
                 kbFocusID = nid;
-                return;
+                return true;
             }
         }
     }
+    return false;
 }
 
-void COverview::onKbMoveFocus(const std::string& dir) {
+bool COverview::onKbMoveFocus(const std::string& dir) {
     if (closing)
-        return;
-    if (dir == "left")
-        moveFocus(-1, 0);
-    else if (dir == "right")
-        moveFocus(1, 0);
-    else if (dir == "up")
-        moveFocus(0, -1);
-    else if (dir == "down")
-        moveFocus(0, 1);
+        return false;
 
-    damage();
+    int                   dx = 0;
+    int                   dy = 0;
+    Hyprexpo::EDirection direction;
+    if (dir == "left") {
+        dx        = -1;
+        direction = Hyprexpo::EDirection::Left;
+    } else if (dir == "right") {
+        dx        = 1;
+        direction = Hyprexpo::EDirection::Right;
+    } else if (dir == "up") {
+        dy        = -1;
+        direction = Hyprexpo::EDirection::Up;
+    } else if (dir == "down") {
+        dy        = 1;
+        direction = Hyprexpo::EDirection::Down;
+    } else
+        return false;
+
+    if (moveFocus(dx, dy)) {
+        damage();
+        return true;
+    }
+
+    return moveOverviewFocusAcrossMonitors(this, direction);
 }
 
-void COverview::onKbConfirm() {
+bool COverview::onKbConfirm() {
     if (closing)
-        return;
+        return false;
     ensureKbFocusInitialized();
-    if (kbFocusID != -1)
-        closeOnID = kbFocusID;
-    close();
+    if (!isTileValid(kbFocusID))
+        return false;
+    closeOnID = kbFocusID;
+    return true;
 }
 
-void COverview::onKbSelectNumber(int num) {
+bool COverview::onKbSelectNumber(int num) {
     if (closing)
-        return;
+        return false;
 
     if (num == 0)
         num = 10;
 
-    if (selectWorkspaceByID(num))
-        close();
+    return selectWorkspaceByID(num);
 }
 
-void COverview::onKbSelectToken(int visibleIdx) {
+bool COverview::onKbSelectToken(int visibleIdx) {
     if (closing)
-        return;
+        return false;
     if (visibleIdx < 0)
-        return;
-    if (selectVisibleIndex(visibleIdx))
-        close();
+        return false;
+    return selectVisibleIndex(visibleIdx);
 }
 
 static float lerpFloat(const float& from, const float& to, const float perc) {

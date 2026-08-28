@@ -238,9 +238,10 @@ void COverview::close(bool switchToSelection) {
 
         const auto OLDWS = MON->m_activeWorkspace;
 
-        const auto CHANGE = !NEWIDWS ? Config::Actions::changeWorkspace(std::to_string(NEWID)) : Config::Actions::changeWorkspace(NEWIDWS->getConfigName());
-        if (!CHANGE)
-            Log::logger->log(Log::ERR, "[hyprexpo] failed to change workspace: {}", CHANGE.error().message);
+        if (NEWIDWS)
+            MON->changeWorkspace(NEWIDWS);
+        else
+            MON->changeWorkspace(NEWID);
 
         Animation::Workspace::startAnimation(MON->m_activeWorkspace, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
         Animation::Workspace::startAnimation(OLDWS, Animation::Workspace::ANIMATION_TYPE_OUT, false, true);

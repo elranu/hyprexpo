@@ -51,18 +51,21 @@ class COverview {
 
     // close without a selection
     void          close(bool switchToSelection = true);
-    void          selectHoveredWorkspace();
+    bool          selectHoveredWorkspace();
 
     // keyboard navigation interface
-    void          onKbMoveFocus(const std::string& dir);
-    void          onKbConfirm();
-    void          onKbSelectNumber(int num);
-    void          onKbSelectToken(int visibleIdx);
+    bool          onKbMoveFocus(const std::string& dir);
+    bool          onKbConfirm();
+    bool          onKbSelectNumber(int num);
+    bool          onKbSelectToken(int visibleIdx);
     bool          selectVisibleToken(const std::string& token);
     int64_t       selectedWorkspaceID() const;
     bool          selectWorkspaceByID(int64_t workspaceID);
     bool          selectVisibleIndex(size_t index);
     bool          moveWindowBetweenVisibleIndices(size_t sourceIndex, size_t targetIndex, const PHLWINDOW& window = nullptr);
+    std::optional<Hyprexpo::SGlobalTile> focusedGlobalTile() const;
+    std::vector<Hyprexpo::SGlobalTile>   globalTiles() const;
+    bool                                 setKeyboardFocus(int tileIndex);
 
     bool          blockOverviewRendering = false;
     bool          blockDamageReporting   = false;
@@ -103,7 +106,7 @@ class COverview {
     void       updateHoveredFromMouse();
     void       ensureKbFocusInitialized();
     bool       isTileValid(int id) const;
-    void       moveFocus(int dx, int dy);
+    bool       moveFocus(int dx, int dy);
     int        tileForWorkspaceID(int wsid) const;
     int        tileForVisibleIndex(int vIdx) const;
     void       beginWindowDrag();
@@ -179,11 +182,29 @@ class COverview {
 // monitor invocation keeps exactly one entry; "all monitors" mode keeps one per
 // output. Instances are owned here and torn down via destroyOverview().
 inline std::vector<std::unique_ptr<COverview>> g_overviews;
+inline PHLMONITORREF                           g_keyboardOverviewMonitor;
+
+struct SOverviewDragRuntime {
+    Hyprexpo::SOverviewDragState state;
+    Vector2D                     pressGlobal;
+    Vector2D                     pointerGlobal;
+    Vector2D                     grabOffset;
+    PHLWINDOW                    window;
+};
+
+inline SOverviewDragRuntime g_overviewDrag;
 
 // The instance that owns keyboard input and unqualified dispatcher commands:
 // the one on the focused monitor, else the one under the cursor, else the
 // first. nullptr when no overview is open.
 COverview* activeOverview();
+COverview* overviewForMonitorKey(uint64_t key);
+uint64_t   overviewMonitorKey(const PHLMONITOR& monitor);
+bool       overviewRegistered(const COverview* overview);
+bool       moveOverviewFocusAcrossMonitors(COverview* source, Hyprexpo::EDirection direction);
+void       closeOverviewsSelecting(COverview* selecting);
+void       closeOverviews(bool switchToSelection);
+void       resetOverviewDrag(Hyprexpo::EOverviewDragEventType type = Hyprexpo::EOverviewDragEventType::Cancel, uint64_t monitorKey = 0);
 
 // The instance owning an animated variable, or nullptr.
 COverview* overviewForAnimVar(const WP<Hyprutils::Animation::CBaseAnimatedVariable>& var);
