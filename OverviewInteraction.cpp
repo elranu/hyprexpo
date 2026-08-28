@@ -402,23 +402,32 @@ void COverview::redrawDraggedWindowTile(int id) {
     if (redrawSettleTimer)
         return;
 
+    const auto OVERVIEWKEY = overviewMonitorKey(pMonitor.lock());
+    if (OVERVIEWKEY == 0)
+        return;
+
     redrawSettleTimer = makeShared<CEventLoopTimer>(
         75ms,
-        [this](SP<CEventLoopTimer> self, void*) {
-            if (!overviewRegistered(this) || closing) {
+        [OVERVIEWKEY](SP<CEventLoopTimer> self, void*) {
+            auto* const OVERVIEW = overviewForMonitorKey(OVERVIEWKEY);
+            if (!OVERVIEW || OVERVIEW->redrawSettleTimer.get() != self.get()) {
                 self->cancel();
-                redrawSettleTimer.reset();
+                return;
+            }
+            if (OVERVIEW->closing) {
+                self->cancel();
+                OVERVIEW->redrawSettleTimer.reset();
                 return;
             }
 
-            for (const auto id : settlingRedrawIDs)
-                queueRedrawID(id);
+            for (const auto id : OVERVIEW->settlingRedrawIDs)
+                OVERVIEW->queueRedrawID(id);
 
-            flushQueuedRedraws();
+            OVERVIEW->flushQueuedRedraws();
 
-            if (--redrawSettleTicks <= 0) {
-                settlingRedrawIDs.clear();
-                redrawSettleTimer.reset();
+            if (--OVERVIEW->redrawSettleTicks <= 0) {
+                OVERVIEW->settlingRedrawIDs.clear();
+                OVERVIEW->redrawSettleTimer.reset();
                 self->cancel();
                 return;
             }

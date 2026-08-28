@@ -1005,6 +1005,10 @@ Vector2D COverview::zoomSizeForCurrentGrid(const Vector2D& monitorSize) const {
 }
 
 COverview::~COverview() {
+    if (redrawSettleTimer) {
+        redrawSettleTimer->cancel();
+        redrawSettleTimer.reset();
+    }
     Render::GL::g_pHyprOpenGL->makeEGLCurrent();
     images.clear(); // otherwise we get a vram leak
     Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_UNKNOWN);
