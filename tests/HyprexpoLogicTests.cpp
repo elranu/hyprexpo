@@ -448,6 +448,24 @@ int main() {
         expect(!NO_TARGET_RELEASE.drop && NO_TARGET_RELEASE.cleanup && !NO_TARGET_RELEASE.next.active, "release without a target cleans up without a drop");
 
         auto targetState = transitionOverviewDrag(noTarget, {.type = EOverviewDragEventType::Target, .monitorKey = 2, .tileIndex = 1}, LIVE).next;
+        const auto sameTile = transitionOverviewDrag(
+            transitionOverviewDrag(VALID_PRESS.next, {.type = EOverviewDragEventType::Move}, LIVE).next,
+            {.type = EOverviewDragEventType::Target, .monitorKey = 1, .tileIndex = 0}, LIVE).next;
+        const auto SAME_TILE_RELEASE = transitionOverviewDrag(sameTile, {.type = EOverviewDragEventType::Release}, LIVE);
+        expect(!SAME_TILE_RELEASE.drop && SAME_TILE_RELEASE.cleanup, "same-tile release is consumed without emitting a drop");
+
+        const auto CLEARED_TARGET = transitionOverviewDrag(targetState, {.type = EOverviewDragEventType::Target}, LIVE);
+        expect(CLEARED_TARGET.accepted && !CLEARED_TARGET.next.targetMonitorKey, "leaving every overview clears the current target without forgetting affected monitors");
+        const auto GAP_RELEASE = transitionOverviewDrag(CLEARED_TARGET.next, {.type = EOverviewDragEventType::Release}, LIVE);
+        expect(!GAP_RELEASE.drop && GAP_RELEASE.cleanup && GAP_RELEASE.cleanupMonitorKeys.size() == 2, "gap release cleans source and former target without a drop");
+
+        auto targetBState = transitionOverviewDrag(targetState, {.type = EOverviewDragEventType::Target, .monitorKey = 3, .tileIndex = 0}, LIVE).next;
+        const auto FORMER_TARGET_DESTROY = transitionOverviewDrag(targetBState, {.type = EOverviewDragEventType::MonitorDestroyed, .monitorKey = 2}, {1, 3});
+        expect(FORMER_TARGET_DESTROY.cleanup && !FORMER_TARGET_DESTROY.next.active, "destroying a former target invalidates and cleans the whole session");
+
+        const auto LOST_TARGET_RELEASE = transitionOverviewDrag(targetState, {.type = EOverviewDragEventType::Release}, {1, 3});
+        expect(!LOST_TARGET_RELEASE.drop && LOST_TARGET_RELEASE.cleanup, "release rejects a target that disappeared without a destruction callback");
+
         const auto TARGET_DESTROY = transitionOverviewDrag(targetState, {.type = EOverviewDragEventType::MonitorDestroyed, .monitorKey = 2}, {1, 3});
         expect(TARGET_DESTROY.cleanup && !TARGET_DESTROY.drop && !TARGET_DESTROY.next.active, "target destruction cancels and cleans the session");
         expect(containsKey(TARGET_DESTROY.cleanupMonitorKeys, 1) && containsKey(TARGET_DESTROY.cleanupMonitorKeys, 2), "target destruction retains source and destroyed-target cleanup keys");

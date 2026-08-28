@@ -50,6 +50,13 @@ std::string extractFunction(const std::string& source, const std::string& signat
     return {};
 }
 
+size_t countOccurrences(const std::string& source, const std::string& needle) {
+    size_t count = 0;
+    for (size_t pos = source.find(needle); pos != std::string::npos; pos = source.find(needle, pos + needle.size()))
+        ++count;
+    return count;
+}
+
 }
 
 int main() {
@@ -194,6 +201,28 @@ int main() {
     expect(interactionSource.find("overviewRegistered(this)") != std::string::npos && interactionSource.find("activeOverview() != this") == std::string::npos,
            "settle timer liveness uses exact registry membership instead of active ownership");
 
+    const auto headerSource = readFile("Overview.hpp");
+    expect(headerSource.find("dragStartLocal") == std::string::npos && headerSource.find("dragSourceID") == std::string::npos && headerSource.find("dragWindow") == std::string::npos,
+           "per-overview drag ownership fields are removed in favor of the registry session");
+    const auto beginDrag  = extractFunction(interactionSource, "void COverview::beginWindowDrag() {");
+    const auto updateDrag = extractFunction(interactionSource, "void COverview::updateWindowDrag() {");
+    const auto finishDrag = extractFunction(interactionSource, "bool COverview::finishWindowDrag() {");
+    expect(beginDrag.find("hitTestGlobalTile(") != std::string::npos && beginDrag.find("EOverviewDragEventType::Press") != std::string::npos,
+           "drag press ownership comes from pure global hit testing and the shared coordinator");
+    expect(updateDrag.find("sourceMonitorKey") != std::string::npos && updateDrag.find("EOverviewDragEventType::Move") != std::string::npos &&
+               updateDrag.find("EOverviewDragEventType::Target") != std::string::npos,
+           "only the shared source owner advances move and target transitions");
+    expect(finishDrag.find("EOverviewDragEventType::Release") != std::string::npos && finishDrag.find("resetOverviewDrag(") != std::string::npos,
+           "release consumes the pure coordinator result and terminates through centralized reset");
+    expect(finishDrag.find("TARGETWS->m_monitor.lock() != TARGETMON") != std::string::npos,
+           "release rejects a target workspace that does not belong to the target overview monitor");
+    expect(countOccurrences(finishDrag, "moveWindowToWorkspace(") == 1,
+           "validated release moves the window exactly once");
+    expect(finishDrag.find("SOURCEOV->redrawDraggedWindowTile(") != std::string::npos && finishDrag.find("TARGETOV->redrawDraggedWindowTile(") != std::string::npos,
+           "source and destination thumbnails refresh independently");
+    expect(finishDrag.find("\"left_ptr\"") == std::string::npos,
+           "release cannot restore the cursor outside centralized reset");
+
     const auto overviewConstructor = extractFunction(source, "COverview::COverview(");
     expect(!overviewConstructor.empty(), "overview constructor exists");
     const auto gapExpansionPos = overviewConstructor.find("Hyprexpo::expandDynamicWorkspaceIDs(");
@@ -220,6 +249,10 @@ int main() {
            "runtime label rendering resolves explicit modern and legacy option precedence");
     expect(fullRender.find("CompatHyprlandAPI::configValueSetByUser(") != std::string::npos,
            "runtime label compatibility checks whether each option was explicitly configured");
+    expect(fullRender.find("g_overviewDrag.state.sourceMonitorKey") != std::string::npos && fullRender.find("g_overviewDrag.state.targetMonitorKey") != std::string::npos,
+           "source and destination overview renders query the one shared drag session");
+    expect(fullRender.find(".pointerLocal") != std::string::npos && fullRender.find("MON->m_scale") != std::string::npos,
+           "destination proxy geometry uses target-local pointer coordinates and target monitor scale");
     expect(source.find("Config::mgr()->getConfigValue(name).setByUser") != std::string::npos,
            "config compatibility exposes explicit-setting metadata for both config providers");
 
@@ -244,6 +277,17 @@ int main() {
     expect(disablePos < reloadPos, "the registration fence is set before the teardown reload re-runs the config");
 
     expect(mainSource.find("config.reloaded.listen") != std::string::npos, "the gesture is re-applied after every config reload");
+
+    const auto multiMonitorDocs = readFile("docs/guides/multi-monitor.md");
+    const auto keyboardDocs     = readFile("docs/configuration/keyboard.md");
+    const auto dispatcherDocs   = readFile("docs/reference/dispatchers.md");
+    expect(multiMonitorDocs.find("global logical geometry") != std::string::npos && multiMonitorDocs.find("target monitor") != std::string::npos &&
+               multiMonitorDocs.find("not supported yet") == std::string::npos,
+           "multi-monitor guide documents geometry-based navigation and target-local drag/drop");
+    expect(keyboardDocs.find("local wrapping takes precedence") != std::string::npos && keyboardDocs.find("keyboard owner") != std::string::npos,
+           "keyboard guide documents explicit ownership and local-wrap precedence");
+    expect(dispatcherDocs.find("fills any missing monitor overviews") != std::string::npos && dispatcherDocs.find("closes every open overview") != std::string::npos,
+           "dispatcher reference distinguishes idempotent enabling from toggle close and peer dismissal");
 
     if (failures != 0)
         return 1;
