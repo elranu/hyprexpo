@@ -463,6 +463,16 @@ int main() {
         const auto FORMER_TARGET_DESTROY = transitionOverviewDrag(targetBState, {.type = EOverviewDragEventType::MonitorDestroyed, .monitorKey = 2}, {1, 3});
         expect(FORMER_TARGET_DESTROY.cleanup && !FORMER_TARGET_DESTROY.next.active, "destroying a former target invalidates and cleans the whole session");
 
+        const auto UNKNOWN_LOST_SOURCE = transitionOverviewDrag(targetState, {.type = EOverviewDragEventType::MonitorDestroyed}, {2, 3});
+        expect(UNKNOWN_LOST_SOURCE.cleanup && !UNKNOWN_LOST_SOURCE.next.active,
+               "an expired source resets the session even when the destruction key is unavailable");
+        const auto UNKNOWN_LOST_TARGET = transitionOverviewDrag(targetState, {.type = EOverviewDragEventType::MonitorDestroyed, .monitorKey = 99}, {1, 3});
+        expect(UNKNOWN_LOST_TARGET.cleanup && !UNKNOWN_LOST_TARGET.next.active,
+               "an expired target resets the session before an unknown destruction key is rejected");
+        const auto UNKNOWN_ALL_LIVE = transitionOverviewDrag(targetState, {.type = EOverviewDragEventType::MonitorDestroyed, .monitorKey = 99}, LIVE);
+        expect(!UNKNOWN_ALL_LIVE.cleanup && UNKNOWN_ALL_LIVE.next.active,
+               "an unrelated destruction key leaves a fully live session intact");
+
         const auto LOST_TARGET_RELEASE = transitionOverviewDrag(targetState, {.type = EOverviewDragEventType::Release}, {1, 3});
         expect(!LOST_TARGET_RELEASE.drop && LOST_TARGET_RELEASE.cleanup, "release rejects a target that disappeared without a destruction callback");
 

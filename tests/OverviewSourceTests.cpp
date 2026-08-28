@@ -194,6 +194,8 @@ int main() {
     expect(!resetDrag.empty(), "registry provides one centralized idempotent drag reset");
     expect(resetDrag.find("transitionOverviewDrag(") != std::string::npos && resetDrag.find("\"left_ptr\"") != std::string::npos && resetDrag.find("damageMonitor") != std::string::npos,
            "central drag reset clears pure state, restores left_ptr, and damages affected live monitors");
+    expect(resetDrag.find("liveOverviewMonitorKeys()") != std::string::npos,
+           "central reset always supplies current registry liveness when a monitor weak reference has expired");
     const auto destroyOne = extractFunction(source, "void destroyOverview(COverview* overview) {");
     const auto destroyAll = extractFunction(source, "void destroyAllOverviews() {");
     const auto moveOwnerPos   = destroyOne.find("auto OWNER = std::move(*IT);");
