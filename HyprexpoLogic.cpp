@@ -277,14 +277,16 @@ SOverviewDragTransition transitionOverviewDrag(const SOverviewDragState& state, 
     if (event.type == EOverviewDragEventType::Cancel || event.type == EOverviewDragEventType::AllClose)
         return cleanupOverviewDrag(state);
 
+    const bool sourceLive = containsMonitorKey(liveMonitorKeys, state.sourceMonitorKey);
+    const bool targetLive = state.targetMonitorKey == 0 || containsMonitorKey(liveMonitorKeys, state.targetMonitorKey);
+    if (!sourceLive || !targetLive)
+        return cleanupOverviewDrag(state);
+
     if (event.type == EOverviewDragEventType::MonitorDestroyed) {
         if (!containsMonitorKey(state.affectedMonitorKeys, event.monitorKey))
             return {.next = state, .drop = std::nullopt, .cleanupMonitorKeys = {}, .accepted = false, .cleanup = false};
         return cleanupOverviewDrag(state);
     }
-
-    if (!containsMonitorKey(liveMonitorKeys, state.sourceMonitorKey))
-        return cleanupOverviewDrag(state);
 
     if (event.type == EOverviewDragEventType::Move) {
         auto next  = state;
