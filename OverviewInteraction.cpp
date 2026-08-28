@@ -7,6 +7,7 @@
 #include <hyprland/src/desktop/state/GlobalWindowController.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
@@ -177,37 +178,85 @@ PHLWINDOW COverview::windowAtTilePoint(int id, const Vector2D& localPoint) const
 }
 
 void COverview::beginWindowDrag() {
-    updateHoveredFromMouse();
-    dragStartLocal = lastMousePosLocal;
-    dragSourceID   = hoveredID;
-    dragMoved      = false;
-    dragWindow     = windowAtTilePoint(dragSourceID, dragStartLocal);
-    dragGrabOffset = Vector2D{};
-    dropIntent         = {};
-    dropIntentTargetID = -1;
-
-    if (!dragWindow)
+    if (g_overviewDrag.state.active)
         return;
 
-    const auto POINT = tilePointToWorkspacePoint(dragSourceID, dragStartLocal);
-    const auto BOX   = dragWindow->getWindowMainSurfaceBox();
-    dragGrabOffset   = POINT - Vector2D{BOX.x, BOX.y};
+    std::vector<Hyprexpo::SGlobalTile> tiles;
+    for (const auto& OV : g_overviews) {
+        auto overviewTiles = OV->globalTiles();
+        tiles.insert(tiles.end(), overviewTiles.begin(), overviewTiles.end());
+    }
+
+    const Vector2D GLOBAL = g_pInputManager->getMouseCoordsInternal();
+    const auto     HIT    = Hyprexpo::hitTestGlobalTile({GLOBAL.x, GLOBAL.y}, tiles);
+    const auto     MON    = pMonitor.lock();
+    if (!HIT || !MON || HIT->overviewKey != overviewMonitorKey(MON))
+        return;
+
+    const Vector2D LOCAL{HIT->pointLocal.x, HIT->pointLocal.y};
+    const auto     WINDOW = windowAtTilePoint(HIT->tileIndex, LOCAL);
+    if (!WINDOW)
+        return;
+
+    auto transition = Hyprexpo::transitionOverviewDrag(
+        g_overviewDrag.state,
+        {.type = Hyprexpo::EOverviewDragEventType::Press, .monitorKey = HIT->overviewKey, .tileIndex = HIT->tileIndex, .windowKey = reinterpret_cast<uint64_t>(WINDOW.get())},
+        liveOverviewMonitorKeys());
+    if (!transition.accepted)
+        return;
+
+    transition = Hyprexpo::transitionOverviewDrag(
+        transition.next, {.type = Hyprexpo::EOverviewDragEventType::Target, .monitorKey = HIT->overviewKey, .tileIndex = HIT->tileIndex}, liveOverviewMonitorKeys());
+
+    const auto POINT              = tilePointToWorkspacePoint(HIT->tileIndex, LOCAL);
+    const auto BOX                = WINDOW->getWindowMainSurfaceBox();
+    g_overviewDrag.state          = transition.next;
+    g_overviewDrag.window         = WINDOW;
+    g_overviewDrag.pressGlobal    = GLOBAL;
+    g_overviewDrag.pointerGlobal  = GLOBAL;
+    g_overviewDrag.grabOffset     = POINT - Vector2D{BOX.x, BOX.y};
     Pointer::Cursor::overrideController->setOverride("grabbing", Pointer::Cursor::CURSOR_OVERRIDE_UNKNOWN);
     damage();
 }
 
 void COverview::updateWindowDrag() {
-    if (!dragWindow)
+    const auto MON = pMonitor.lock();
+    if (!MON || !g_overviewDrag.state.active || g_overviewDrag.state.sourceMonitorKey != overviewMonitorKey(MON))
         return;
 
-    const auto dx = lastMousePosLocal.x - dragStartLocal.x;
-    const auto dy = lastMousePosLocal.y - dragStartLocal.y;
-    if (!dragMoved && std::hypot(dx, dy) < 12.0)
+    const Vector2D GLOBAL = g_pInputManager->getMouseCoordsInternal();
+    g_overviewDrag.pointerGlobal = GLOBAL;
+    const auto dx = GLOBAL.x - g_overviewDrag.pressGlobal.x;
+    const auto dy = GLOBAL.y - g_overviewDrag.pressGlobal.y;
+    if (!g_overviewDrag.state.moved && std::hypot(dx, dy) < 12.0)
         return;
 
-    if (!dragMoved)
-        dragMoved = true;
-    damage();
+    if (!g_overviewDrag.state.moved) {
+        const auto move = Hyprexpo::transitionOverviewDrag(g_overviewDrag.state, {.type = Hyprexpo::EOverviewDragEventType::Move}, liveOverviewMonitorKeys());
+        if (!move.accepted)
+            return;
+        g_overviewDrag.state = move.next;
+    }
+
+    std::vector<Hyprexpo::SGlobalTile> tiles;
+    for (const auto& OV : g_overviews) {
+        auto overviewTiles = OV->globalTiles();
+        tiles.insert(tiles.end(), overviewTiles.begin(), overviewTiles.end());
+    }
+
+    const auto HIT = Hyprexpo::hitTestGlobalTile({GLOBAL.x, GLOBAL.y}, tiles);
+    const auto target = Hyprexpo::transitionOverviewDrag(
+        g_overviewDrag.state,
+        HIT ? Hyprexpo::SOverviewDragEvent{.type = Hyprexpo::EOverviewDragEventType::Target, .monitorKey = HIT->overviewKey, .tileIndex = HIT->tileIndex}
+            : Hyprexpo::SOverviewDragEvent{.type = Hyprexpo::EOverviewDragEventType::Target},
+        liveOverviewMonitorKeys());
+    if (target.accepted)
+        g_overviewDrag.state = target.next;
+
+    for (const auto key : g_overviewDrag.state.affectedMonitorKeys) {
+        if (auto* const OV = overviewForMonitorKey(key))
+            OV->damage();
+    }
 }
 
 PHLWORKSPACE COverview::ensureWorkspaceForTile(int id) {
@@ -238,52 +287,47 @@ PHLWORKSPACE COverview::ensureWorkspaceForTile(int id) {
 }
 
 bool COverview::finishWindowDrag() {
-    const auto WINDOW = dragWindow;
-    const int  SOURCE = dragSourceID;
-    const bool MOVED  = dragMoved;
-
-    dragWindow     = nullptr;
-    dragSourceID   = -1;
-    dragMoved      = false;
-    dragGrabOffset = Vector2D{};
-    dropIntent         = {};
-    dropIntentTargetID = -1;
-    Pointer::Cursor::overrideController->setOverride("left_ptr", Pointer::Cursor::CURSOR_OVERRIDE_UNKNOWN);
-
-    if (!WINDOW || !MOVED)
+    const auto MON = pMonitor.lock();
+    if (!MON || !g_overviewDrag.state.active || g_overviewDrag.state.sourceMonitorKey != overviewMonitorKey(MON))
         return false;
 
-    // Drag proxies are render-only; repaint even when release does not move workspace contents.
-    damage();
-    updateHoveredFromMouse();
+    const auto STATE      = g_overviewDrag.state;
+    const auto TRANSITION = Hyprexpo::transitionOverviewDrag(STATE, {.type = Hyprexpo::EOverviewDragEventType::Release}, liveOverviewMonitorKeys());
+    const bool CONSUMED   = STATE.moved;
 
-    const int TARGET = hoveredID;
-    if (!isTileValid(SOURCE) || !isTileValid(TARGET) || SOURCE == TARGET)
-        return true;
+    if (TRANSITION.drop && g_overviewDrag.window && reinterpret_cast<uint64_t>(g_overviewDrag.window.get()) == TRANSITION.drop->windowKey) {
+        auto* const SOURCEOV  = overviewForMonitorKey(TRANSITION.drop->sourceMonitorKey);
+        auto* const TARGETOV  = overviewForMonitorKey(TRANSITION.drop->targetMonitorKey);
+        const auto  TARGETMON = TARGETOV ? TARGETOV->pMonitor.lock() : PHLMONITOR{};
+        const int   SOURCE    = TRANSITION.drop->sourceTileIndex;
+        const int   TARGET    = TRANSITION.drop->targetTileIndex;
 
-    PHLWORKSPACE SOURCEWS;
-    if (images[SOURCE].pWorkspace) {
-        SOURCEWS = images[SOURCE].pWorkspace;
-    }
-    else {
-        for (const auto& w : State::workspaceState()->workspacesCopy()) {
-            if (w->m_id == images[SOURCE].workspaceID) {
-                SOURCEWS = w;
-                break;
+        if (SOURCEOV && TARGETOV && TARGETMON && SOURCEOV->isTileValid(SOURCE) && TARGETOV->isTileValid(TARGET)) {
+            PHLWORKSPACE SOURCEWS = SOURCEOV->images[SOURCE].pWorkspace;
+            if (!SOURCEWS) {
+                for (const auto& workspace : State::workspaceState()->workspacesCopy()) {
+                    if (workspace->m_id == SOURCEOV->images[SOURCE].workspaceID) {
+                        SOURCEWS = workspace;
+                        break;
+                    }
+                }
+            }
+
+            const auto TARGETWS = TARGETOV->ensureWorkspaceForTile(TARGET);
+            if (TARGETWS && TARGETWS->m_monitor.lock() != TARGETMON)
+                Log::logger->log(Log::ERR, "[hyprexpo] rejected drag target workspace on the wrong monitor");
+            else if (windowVisibleOnWorkspace(g_overviewDrag.window, SOURCEWS) && TARGETWS && TARGETWS != SOURCEWS) {
+                SOURCEOV->images[SOURCE].pWorkspace = SOURCEWS;
+                Desktop::globalWindowController()->moveWindowToWorkspace(g_overviewDrag.window, TARGETWS);
+                settleWorkspaceMoveAnimation(g_overviewDrag.window);
+                SOURCEOV->redrawDraggedWindowTile(SOURCE);
+                TARGETOV->redrawDraggedWindowTile(TARGET);
             }
         }
     }
 
-    const auto TARGETWS = ensureWorkspaceForTile(TARGET);
-
-    if (!windowVisibleOnWorkspace(WINDOW, SOURCEWS) || !TARGETWS || TARGETWS == SOURCEWS)
-        return true;
-
-    images[SOURCE].pWorkspace = SOURCEWS;
-    Desktop::globalWindowController()->moveWindowToWorkspace(WINDOW, TARGETWS);
-    settleWorkspaceMoveAnimation(WINDOW);
-    redrawDraggedWindowTiles(SOURCE, TARGET);
-    return true;
+    resetOverviewDrag(Hyprexpo::EOverviewDragEventType::Release);
+    return CONSUMED;
 }
 
 bool COverview::moveWindowBetweenVisibleIndices(size_t sourceIndex, size_t targetIndex, const PHLWINDOW& requestedWindow) {
@@ -335,13 +379,13 @@ bool COverview::moveWindowBetweenVisibleIndices(size_t sourceIndex, size_t targe
     images[SOURCE].pWorkspace = SOURCEWS;
     Desktop::globalWindowController()->moveWindowToWorkspace(window, TARGETWS);
     settleWorkspaceMoveAnimation(window);
-    redrawDraggedWindowTiles(SOURCE, TARGET);
+    redrawDraggedWindowTile(SOURCE);
+    redrawDraggedWindowTile(TARGET);
     return true;
 }
 
-void COverview::redrawDraggedWindowTiles(int source, int target) {
-    queueRedrawID(source);
-    queueRedrawID(target);
+void COverview::redrawDraggedWindowTile(int id) {
+    queueRedrawID(id);
 
     for (const auto id : queuedRedrawIDs) {
         if (std::find(settlingRedrawIDs.begin(), settlingRedrawIDs.end(), id) == settlingRedrawIDs.end())

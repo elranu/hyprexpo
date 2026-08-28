@@ -671,6 +671,17 @@ COverview* overviewForMonitorKey(uint64_t key) {
     return nullptr;
 }
 
+COverview* overviewForGlobalPoint(const Vector2D& point) {
+    for (const auto& OV : g_overviews) {
+        const auto MON = OV->pMonitor.lock();
+        if (!MON)
+            continue;
+        if (point.x >= MON->m_position.x && point.x < MON->m_position.x + MON->m_size.x && point.y >= MON->m_position.y && point.y < MON->m_position.y + MON->m_size.y)
+            return OV.get();
+    }
+    return nullptr;
+}
+
 bool overviewRegistered(const COverview* overview) {
     return overview && std::any_of(g_overviews.begin(), g_overviews.end(), [overview](const auto& entry) { return entry.get() == overview; });
 }
@@ -800,7 +811,7 @@ void forEachOverview(const std::function<void(COverview&)>& fn) {
     }
 }
 
-static std::vector<uint64_t> liveOverviewMonitorKeys() {
+std::vector<uint64_t> liveOverviewMonitorKeys() {
     std::vector<uint64_t> keys;
     keys.reserve(g_overviews.size());
     for (const auto& OV : g_overviews)
@@ -1274,51 +1285,73 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor_, bool swipe_) 
     kbFocusID = openedID;
 
     auto onCursorMove = [this](Event::SCallbackInfo& info) {
-        if (closing)
+        if (closing || info.cancelled)
             return;
 
+        info.cancelled = true;
         ensureOverviewCursorVisible();
 
-        info.cancelled    = true;
-        lastMousePosLocal = g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position;
-        updateHoveredFromMouse();
-        updateWindowDrag();
+        const Vector2D GLOBAL = g_pInputManager->getMouseCoordsInternal();
+        for (const auto& OV : g_overviews) {
+            const auto MON = OV->pMonitor.lock();
+            if (!MON || OV->closing)
+                continue;
+            OV->lastMousePosLocal = GLOBAL - MON->m_position;
+            OV->updateHoveredFromMouse();
+        }
+
+        if (auto* const SOURCE = overviewForMonitorKey(g_overviewDrag.state.sourceMonitorKey))
+            SOURCE->updateWindowDrag();
     };
 
     auto onCursorSelect = [this](const IPointer::SButtonEvent& event, Event::SCallbackInfo& info) {
-        if (closing)
+        if (closing || info.cancelled)
             return;
+
+        const Vector2D GLOBAL = g_pInputManager->getMouseCoordsInternal();
+        auto* const    TARGET = overviewForGlobalPoint(GLOBAL);
+        auto* const    SOURCE = overviewForMonitorKey(g_overviewDrag.state.sourceMonitorKey);
+        if (!TARGET && !SOURCE)
+            return;
+
+        info.cancelled = true;
 
         // If expo hasn't animated in enough to be visible, close silently without
         // consuming the event. This prevents phantom triggers (e.g. a bouncing
         // mouse side-button firing the expo keybind) from swallowing real clicks.
-        if (size->getPercent() < 0.05f) {
-            close();
+        if (TARGET && TARGET->size->getPercent() < 0.05f) {
+            TARGET->close(false);
             return;
         }
-
-        info.cancelled = true;
 
         if (event.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-            if (**PDRAGDROPENABLE)
-                beginWindowDrag();
+            if (**PDRAGDROPENABLE && TARGET)
+                TARGET->beginWindowDrag();
             return;
         }
 
-        if (**PDRAGDROPENABLE && finishWindowDrag())
-            return;
+        if (**PDRAGDROPENABLE && SOURCE) {
+            const bool CONSUMED = SOURCE->finishWindowDrag();
+            if (CONSUMED)
+                return;
+        }
 
-        if (selectHoveredWorkspace())
-            closeOverviewsSelecting(this);
+        if (TARGET && TARGET->selectHoveredWorkspace())
+            closeOverviewsSelecting(TARGET);
     };
 
     auto onTouchSelect = [this](Event::SCallbackInfo& info) {
-        if (closing)
+        if (closing || info.cancelled)
+            return;
+
+        const Vector2D GLOBAL = g_pInputManager->getMouseCoordsInternal();
+        auto* const    TARGET = overviewForGlobalPoint(GLOBAL);
+        if (!TARGET)
             return;
 
         info.cancelled = true;
-        if (selectHoveredWorkspace())
-            closeOverviewsSelecting(this);
+        if (TARGET->selectHoveredWorkspace())
+            closeOverviewsSelecting(TARGET);
     };
 
     mouseMoveHook = Event::bus()->m_events.input.mouse.move.listen([onCursorMove](const Vector2D&, Event::SCallbackInfo& info) { onCursorMove(info); });

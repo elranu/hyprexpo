@@ -697,76 +697,49 @@ void COverview::fullRender() {
     if (kbFocusID != -1)
         drawBorderForID(kbFocusID, std::string{*PBCOLFOC}, std::string{*PBGREFOC}, RND_FOC);
 
-    if (dragMoved && dragSourceID != -1) {
+    const auto OVERVIEWKEY = overviewMonitorKey(MON);
+    if (g_overviewDrag.state.moved && g_overviewDrag.state.sourceMonitorKey == OVERVIEWKEY && isTileValid(g_overviewDrag.state.sourceTileIndex)) {
         const std::string sourceBorder = std::string{*PDRAGSOURCEBORDER}.empty() ? std::string{*PBCOLFOC} : std::string{*PDRAGSOURCEBORDER};
         const int         sourceWidth  = **PDRAGSOURCEBWIDTH >= 0 ? **PDRAGSOURCEBWIDTH : (int)**PBWIDTH;
-        drawBorderForID(dragSourceID, sourceBorder, std::string{*PBGREFOC}, RND_FOC, sourceWidth);
+        drawBorderForID(g_overviewDrag.state.sourceTileIndex, sourceBorder, std::string{*PBGREFOC}, RND_FOC, sourceWidth);
     }
 
-    dropIntent         = {};
-    dropIntentTargetID = -1;
-
-    if (dragWindow && isTileValid(dragSourceID)) {
-        const auto windowBox = dragWindow->getWindowMainSurfaceBox();
+    if (g_overviewDrag.window && g_overviewDrag.state.targetMonitorKey == OVERVIEWKEY && isTileValid(g_overviewDrag.state.targetTileIndex)) {
+        const auto windowBox = g_overviewDrag.window->getWindowMainSurfaceBox();
         if (windowBox.w > 0 && windowBox.h > 0) {
-            const CBox& sourceBox = tileBoxes[dragSourceID];
-            const double scaleX   = sourceBox.w / MON->m_size.x;
-            const double scaleY   = sourceBox.h / MON->m_size.y;
-            const double minW     = std::min(sourceBox.w, 24.0 * MON->m_scale);
-            const double minH     = std::min(sourceBox.h, 24.0 * MON->m_scale);
-
-            CBox proxy{
-                lastMousePosLocal.x * MON->m_scale - dragGrabOffset.x * scaleX,
-                lastMousePosLocal.y * MON->m_scale - dragGrabOffset.y * scaleY,
-                std::clamp(windowBox.w * scaleX, minW, sourceBox.w),
-                std::clamp(windowBox.h * scaleY, minH, sourceBox.h),
-            };
-            proxy.round();
-
-            const int maxProxyRound = std::max(0, (int)std::floor(std::min(proxy.w, proxy.h) / 2.0));
-            const int autoRound     = std::min(RND_FOC, maxProxyRound);
-            const int round        = **PDRAGPROXYROUND >= 0 ? std::min(std::max(0, (int)std::lround((double)**PDRAGPROXYROUND * MON->m_scale)), maxProxyRound) : autoRound;
-
-            if (dragMoved && hoveredID != -1 && hoveredID != dragSourceID && isTileValid(hoveredID)) {
-                const auto targetTileBox = tileBoxForIndex(hoveredID, SIZE, GAPSIZE, OUTER, true);
-                const Hyprexpo::SRect targetTileLocal{targetTileBox.x, targetTileBox.y, targetTileBox.w, targetTileBox.h};
-                dropIntent = Hyprexpo::computeDropIntentGeometry({
-                    .targetValid     = true,
-                    .pointerLocal    = {lastMousePosLocal.x, lastMousePosLocal.y},
-                    .targetTileLocal = targetTileLocal,
-                    .workspaceSize   = {MON->m_size.x, MON->m_size.y},
-                    .windowSize      = {windowBox.w, windowBox.h},
-                    .grabOffset      = {dragGrabOffset.x, dragGrabOffset.y},
-                });
-                dropIntentTargetID = dropIntent.valid ? hoveredID : -1;
-            }
-
+            const int  TARGET             = g_overviewDrag.state.targetTileIndex;
+            const auto targetTileBox      = tileBoxForIndex(TARGET, SIZE, GAPSIZE, OUTER, true);
+            const Vector2D pointerLocal   = g_overviewDrag.pointerGlobal - MON->m_position;
+            const auto dropIntent = Hyprexpo::computeDropIntentGeometry({
+                .targetValid     = true,
+                .pointerLocal    = {pointerLocal.x, pointerLocal.y},
+                .targetTileLocal = {targetTileBox.x, targetTileBox.y, targetTileBox.w, targetTileBox.h},
+                .workspaceSize   = {MON->m_size.x, MON->m_size.y},
+                .windowSize      = {windowBox.w, windowBox.h},
+                .grabOffset      = {g_overviewDrag.grabOffset.x, g_overviewDrag.grabOffset.y},
+            });
             if (dropIntent.valid) {
-                CBox targetProxy{
+                CBox proxy{
                     dropIntent.targetProxyLocal.x,
                     dropIntent.targetProxyLocal.y,
                     dropIntent.targetProxyLocal.w,
                     dropIntent.targetProxyLocal.h,
                 };
-                targetProxy.scale(MON->m_scale).translate(pos->value());
-                targetProxy.round();
+                proxy.scale(MON->m_scale).translate(pos->value());
+                proxy.round();
 
-                const int targetMaxRound = std::max(0, (int)std::floor(std::min(targetProxy.w, targetProxy.h) / 2.0));
-                const int targetRound    = **PDRAGPROXYROUND >= 0 ? std::min(std::max(0, (int)std::lround((double)**PDRAGPROXYROUND * MON->m_scale)), targetMaxRound) : std::min(RND_FOC, targetMaxRound);
-                Render::GL::g_pHyprOpenGL->renderRect(targetProxy, CHyprColor{(uint64_t)**PDRAGPROXYACTCOL}, {.round = targetRound, .roundingPower = ROUND_PWR});
+                const int maxProxyRound = std::max(0, (int)std::floor(std::min(proxy.w, proxy.h) / 2.0));
+                const int autoRound     = std::min(RND_FOC, maxProxyRound);
+                const int round        = **PDRAGPROXYROUND >= 0 ? std::min(std::max(0, (int)std::lround((double)**PDRAGPROXYROUND * MON->m_scale)), maxProxyRound) : autoRound;
 
-                const int   borderWidth   = **PDRAGPROXYBWIDTH >= 0 ? **PDRAGPROXYBWIDTH : std::max(2, (int)**PBWIDTH + 1);
-                const std::string effectiveSpec = std::string{*PDRAGPROXYBORDER}.empty() ? std::string{*PBCOLFOC} : std::string{*PDRAGPROXYBORDER};
-                drawProxyBorder(targetProxy, targetRound, borderWidth, effectiveSpec, std::string{*PBGREFOC});
+                Render::GL::g_pHyprOpenGL->renderRect(proxy, CHyprColor{(uint64_t)(g_overviewDrag.state.moved ? **PDRAGPROXYACTCOL : **PDRAGPROXYCOL)}, {.round = round, .roundingPower = ROUND_PWR});
+
+                const int borderWidth = **PDRAGPROXYBWIDTH >= 0 ? **PDRAGPROXYBWIDTH : std::max(2, (int)**PBWIDTH + 1);
+                std::string effectiveSpec = std::string{*PDRAGPROXYBORDER}.empty() ? std::string{*PBCOLFOC} : std::string{*PDRAGPROXYBORDER};
+                if (effectiveSpec.empty())
+                    effectiveSpec = std::string{*PBGREFOC};
+                drawProxyBorder(proxy, round, borderWidth, effectiveSpec, std::string{*PBGREFOC});
             }
-
-            Render::GL::g_pHyprOpenGL->renderRect(proxy, CHyprColor{(uint64_t)(dragMoved ? **PDRAGPROXYACTCOL : **PDRAGPROXYCOL)}, {.round = round, .roundingPower = ROUND_PWR});
-
-            const int   borderWidth   = **PDRAGPROXYBWIDTH >= 0 ? **PDRAGPROXYBWIDTH : std::max(2, (int)**PBWIDTH + 1);
-            std::string effectiveSpec = std::string{*PDRAGPROXYBORDER}.empty() ? std::string{*PBCOLFOC} : std::string{*PDRAGPROXYBORDER};
-            if (effectiveSpec.empty())
-                effectiveSpec = std::string{*PBGREFOC};
-            drawProxyBorder(proxy, round, borderWidth, effectiveSpec, std::string{*PBGREFOC});
         }
     }
 

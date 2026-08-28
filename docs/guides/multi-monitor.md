@@ -66,9 +66,18 @@ plugin {
 }
 ```
 
-Keyboard navigation stays on one overview at a time: the one on the focused
-monitor, falling back to the one under the cursor. Arrow keys do not cross
-monitor boundaries, and dragging a window between monitors is not supported yet.
+Keyboard navigation has one explicit keyboard owner. Movement stays inside that
+overview while a valid local tile (including a configured wrap target) exists.
+At an exhausted edge, the plugin uses global logical geometry to choose the
+nearest tile in that direction on another monitor. Selecting it switches only
+the target monitor, then dismisses every open overview.
+
+Window previews can also be dragged between monitor overviews. The monitor under
+the pointer renders the proxy with the target monitor's own logical tile layout
+and scale. After a valid drop, source and target thumbnails refresh
+independently. Releasing over a gap, the source tile, or an invalid target moves
+nothing; cleanup still removes highlights, restores the cursor, and repaints
+every monitor visited by the drag.
 
 ## Troubleshooting Monitor Names
 

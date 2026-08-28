@@ -92,9 +92,9 @@ int main() {
            "drag/drop enable configuration is registered");
     expect(source.find("plugin:hyprexpo:drag_drop_enable") != std::string::npos,
            "drag/drop enable configuration has a compatibility default");
-    expect(source.find("if (**PDRAGDROPENABLE)\n                beginWindowDrag();") != std::string::npos,
+    expect(source.find("if (**PDRAGDROPENABLE && TARGET)\n                TARGET->beginWindowDrag();") != std::string::npos,
            "drag/drop enable configuration gates drag start");
-    expect(source.find("if (**PDRAGDROPENABLE && finishWindowDrag())") != std::string::npos,
+    expect(source.find("if (**PDRAGDROPENABLE && SOURCE)") != std::string::npos && source.find("SOURCE->finishWindowDrag()") != std::string::npos,
            "drag/drop enable configuration gates drag completion");
 
     const auto dispatchersSource = readFile("Dispatchers.cpp");

@@ -112,7 +112,7 @@ class COverview {
     void       beginWindowDrag();
     bool       finishWindowDrag();
     void       updateWindowDrag();
-    void       redrawDraggedWindowTiles(int source, int target);
+    void       redrawDraggedWindowTile(int id);
     void       queueRedrawID(int id);
     void       flushQueuedRedraws();
     PHLWINDOW  windowAtTilePoint(int id, const Vector2D& localPoint) const;
@@ -136,14 +136,6 @@ class COverview {
     int                          kbFocusID = -1;
     int                          hoveredID = -1;
     bool                         submapActive = false;
-
-    Vector2D                     dragStartLocal = Vector2D{};
-    int                          dragSourceID   = -1;
-    bool                         dragMoved      = false;
-    Vector2D                     dragGrabOffset = Vector2D{};
-    PHLWINDOW                    dragWindow;
-    int                          dropIntentTargetID = -1;
-    Hyprexpo::SDropIntentGeometry dropIntent;
 
     std::vector<int>             queuedRedrawIDs;
     std::vector<int>             settlingRedrawIDs;
@@ -199,8 +191,10 @@ inline SOverviewDragRuntime g_overviewDrag;
 // first. nullptr when no overview is open.
 COverview* activeOverview();
 COverview* overviewForMonitorKey(uint64_t key);
+COverview* overviewForGlobalPoint(const Vector2D& point);
 uint64_t   overviewMonitorKey(const PHLMONITOR& monitor);
 bool       overviewRegistered(const COverview* overview);
+std::vector<uint64_t> liveOverviewMonitorKeys();
 bool       moveOverviewFocusAcrossMonitors(COverview* source, Hyprexpo::EDirection direction);
 void       closeOverviewsSelecting(COverview* selecting);
 void       closeOverviews(bool switchToSelection);
