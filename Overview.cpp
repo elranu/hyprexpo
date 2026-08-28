@@ -1318,6 +1318,8 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor_, bool swipe_) 
 
         const Vector2D GLOBAL = g_pInputManager->getMouseCoordsInternal();
         for (const auto& OV : g_overviews) {
+            if (!OV)
+                continue;
             const auto MON = OV->pMonitor.lock();
             if (!MON || OV->closing)
                 continue;
