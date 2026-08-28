@@ -68,6 +68,75 @@ struct SRect {
     double h = 0.0;
 };
 
+enum class EDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+};
+
+struct SGlobalTile {
+    uint64_t overviewKey = 0;
+    int      tileIndex   = -1;
+    SRect    overviewGlobal;
+    SRect    tileGlobal;
+};
+
+struct STileTarget {
+    uint64_t overviewKey = 0;
+    int      tileIndex   = -1;
+};
+
+struct STileHit {
+    uint64_t overviewKey = 0;
+    int      tileIndex   = -1;
+    SPoint   pointLocal;
+};
+
+enum class EOverviewDragEventType {
+    Press,
+    Move,
+    Target,
+    Release,
+    Cancel,
+    MonitorDestroyed,
+    AllClose,
+};
+
+struct SOverviewDragState {
+    bool                  active             = false;
+    bool                  moved              = false;
+    uint64_t              sourceMonitorKey   = 0;
+    int                   sourceTileIndex    = -1;
+    uint64_t              targetMonitorKey   = 0;
+    int                   targetTileIndex    = -1;
+    uint64_t              windowKey          = 0;
+    std::vector<uint64_t> affectedMonitorKeys;
+};
+
+struct SOverviewDragEvent {
+    EOverviewDragEventType type       = EOverviewDragEventType::Move;
+    uint64_t               monitorKey = 0;
+    int                    tileIndex  = -1;
+    uint64_t               windowKey  = 0;
+};
+
+struct SOverviewDropIntent {
+    uint64_t sourceMonitorKey = 0;
+    int      sourceTileIndex  = -1;
+    uint64_t targetMonitorKey = 0;
+    int      targetTileIndex  = -1;
+    uint64_t windowKey        = 0;
+};
+
+struct SOverviewDragTransition {
+    SOverviewDragState                next;
+    std::optional<SOverviewDropIntent> drop;
+    std::vector<uint64_t>             cleanupMonitorKeys;
+    bool                              accepted = false;
+    bool                              cleanup  = false;
+};
+
 struct SGridShape {
     int cols = 1;
     int rows = 1;
@@ -115,6 +184,9 @@ std::optional<std::vector<int64_t>> expandDynamicWorkspaceIDs(const std::vector<
 SSize                    aspectCorrectTileSize(double screenW, double screenH, int cols, int rows, double gap);
 STileLayout              computeTileLayout(int index, int visibleCount, SGridShape shape, SSize total, double gap, bool centerPartialRows);
 int                      tileIndexAtPoint(double x, double y, int visibleCount, SGridShape shape, SSize total, double gap, bool centerPartialRows);
+std::optional<STileTarget> selectDirectionalTile(const SRect& source, EDirection direction, const std::vector<SGlobalTile>& candidates);
+std::optional<STileHit>    hitTestGlobalTile(const SPoint& point, const std::vector<SGlobalTile>& tiles);
+SOverviewDragTransition    transitionOverviewDrag(const SOverviewDragState& state, const SOverviewDragEvent& event, const std::vector<uint64_t>& liveMonitorKeys);
 
 int                      clampGridColumns(int columns);
 int                      gridColumnsToIncludeWorkspace(int configuredColumns, int firstWorkspaceID, int activeWorkspaceID, int maxColumns);
