@@ -196,8 +196,27 @@ int main() {
            "central drag reset clears pure state, restores left_ptr, and damages affected live monitors");
     const auto destroyOne = extractFunction(source, "void destroyOverview(COverview* overview) {");
     const auto destroyAll = extractFunction(source, "void destroyAllOverviews() {");
-    expect(destroyOne.find("resetOverviewDrag(") < destroyOne.find("std::erase_if("), "single-overview destruction resets drag before erasing ownership");
-    expect(destroyAll.find("resetOverviewDrag(") < destroyAll.find("g_overviews.clear();"), "all-overview destruction resets drag before clearing ownership");
+    const auto moveOwnerPos   = destroyOne.find("auto OWNER = std::move(*IT);");
+    const auto eraseSlotPos   = destroyOne.find("g_overviews.erase(IT);");
+    const auto destroyOwnerPos = destroyOne.find("OWNER.reset();");
+    expect(destroyOne.find("resetOverviewDrag(") < moveOwnerPos, "single-overview destruction resets drag before unregistering ownership");
+    expect(moveOwnerPos != std::string::npos && eraseSlotPos != std::string::npos && destroyOwnerPos != std::string::npos && moveOwnerPos < eraseSlotPos && eraseSlotPos < destroyOwnerPos,
+           "single-overview teardown unregisters the moved owner before its cursor-restoring destructor runs");
+    const auto swapRegistryPos = destroyAll.find("OWNERS.swap(g_overviews);");
+    const auto clearOwnersPos  = destroyAll.find("OWNERS.clear();");
+    expect(destroyAll.find("resetOverviewDrag(") < swapRegistryPos && swapRegistryPos < clearOwnersPos,
+           "all-overview teardown empties the registry before any owner destructor runs");
+
+    const auto byAnimVar  = extractFunction(source, "COverview* overviewForAnimVar(");
+    const auto byMonitor  = extractFunction(source, "COverview* overviewForMonitor(");
+    const auto byKey      = extractFunction(source, "COverview* overviewForMonitorKey(");
+    const auto byPoint    = extractFunction(source, "COverview* overviewForGlobalPoint(");
+    expect(byAnimVar.find("if (!OV)") < byAnimVar.find("OV->ownsAnimVar("), "animation-owner lookup skips null registry slots before dereference");
+    expect(byMonitor.find("if (!OV)") < byMonitor.find("OV->pMonitor"), "monitor lookup skips null registry slots before dereference");
+    expect(byKey.find("if (!OV)") < byKey.find("OV->pMonitor"), "monitor-key lookup skips null registry slots before dereference");
+    expect(byPoint.find("if (!OV)") < byPoint.find("OV->pMonitor"), "point lookup skips null registry slots before dereference");
+    expect(source.find("if (OV)\n            snapshot.push_back(OV.get());") != std::string::npos,
+           "safe registry snapshots never publish null overview pointers");
     expect(interactionSource.find("overviewRegistered(this)") != std::string::npos && interactionSource.find("activeOverview() != this") == std::string::npos,
            "settle timer liveness uses exact registry membership instead of active ownership");
 
