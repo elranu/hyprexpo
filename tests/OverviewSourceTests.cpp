@@ -169,6 +169,25 @@ int main() {
     expect(toggleBlock.find("openOverviews(ALL_MONITORS);") != std::string::npos && toggleBlock.find("closeOverviews(false);") != std::string::npos,
            "toggle all preserves close-when-any-open semantics");
 
+    const auto selectStart = expoDispatcher.find("if (arg == \"select\")");
+    const auto bringStart  = expoDispatcher.find("if (arg == \"bring\")", selectStart);
+    const auto toggleAfterBring = expoDispatcher.find("if (arg == \"toggle\")", bringStart);
+    const auto selectBlock = selectStart == std::string::npos || bringStart == std::string::npos ? std::string{} : expoDispatcher.substr(selectStart, bringStart - selectStart);
+    const auto bringBlock  = bringStart == std::string::npos || toggleAfterBring == std::string::npos ? std::string{} : expoDispatcher.substr(bringStart, toggleAfterBring - bringStart);
+    expect(selectBlock.find("overviewForGlobalPoint(") != std::string::npos && selectBlock.find("activeOverview()") == std::string::npos,
+           "pointer select resolves the overview under the cursor instead of keyboard ownership");
+    expect(bringBlock.find("overviewForGlobalPoint(") != std::string::npos && bringBlock.find("activeOverview()") == std::string::npos,
+           "pointer bring resolves the overview under the cursor instead of keyboard ownership");
+    expect(bringBlock.find("const auto DESTINATION = OV->pMonitor.lock();") != std::string::npos &&
+               bringBlock.find("bringWindowFromWorkspace(OV->selectedWorkspaceID(), DESTINATION)") != std::string::npos,
+           "bring passes the cursor overview's monitor as the explicit destination");
+
+    const auto bringWindow = extractFunction(dispatchersSource, "static SDispatchResult bringWindowFromWorkspace(int64_t sourceWorkspaceID, const PHLMONITOR& destinationMonitor) {");
+    expect(!bringWindow.empty() && bringWindow.find("destinationMonitor->m_activeWorkspace") != std::string::npos,
+           "bring moves onto the explicitly chosen cursor monitor workspace");
+    expect(bringWindow.find("focusState ? focusState->monitor()") == std::string::npos && bringWindow.find("State::monitorState()->query()") == std::string::npos,
+           "bring never recomputes its destination from keyboard focus or cursor fallback");
+
     const auto activeFunction = extractFunction(source, "COverview* activeOverview() {");
     expect(activeFunction.find("g_keyboardOverviewMonitor.lock()") != std::string::npos && activeFunction.find("overviewForMonitor(KEYBOARD)") != std::string::npos,
            "active overview honors a persistent explicit keyboard owner before compositor focus");
@@ -324,6 +343,8 @@ int main() {
            "keyboard guide documents explicit ownership and local-wrap precedence");
     expect(dispatcherDocs.find("fills any missing monitor overviews") != std::string::npos && dispatcherDocs.find("closes every open overview") != std::string::npos,
            "dispatcher reference distinguishes idempotent enabling from toggle close and peer dismissal");
+    expect(dispatcherDocs.find("monitor under the pointer") != std::string::npos,
+           "dispatcher reference identifies cursor ownership for pointer select and bring");
 
     if (failures != 0)
         return 1;
