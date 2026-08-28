@@ -42,6 +42,11 @@ of filling the missing monitors. Every successful keyboard, pointer, or touch
 selection also closes every open overview; only the overview that owns the
 selected tile changes workspace.
 
+Pointer-driven `select` and `bring` always act on the overview for the monitor under the pointer.
+This remains true after keyboard focus has crossed to another
+monitor: `bring` moves the chosen window into the pointer monitor's active
+workspace rather than the keyboard-owned or compositor-focused monitor.
+
 Keyboard navigation dispatchers are active during overview:
 
 | dispatcher | argument | description |

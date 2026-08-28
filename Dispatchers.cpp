@@ -146,16 +146,14 @@ static PHLWINDOW windowToBringFromWorkspace(const PHLWORKSPACE& workspace) {
     return nullptr;
 }
 
-static SDispatchResult bringWindowFromWorkspace(int64_t sourceWorkspaceID) {
+static SDispatchResult bringWindowFromWorkspace(int64_t sourceWorkspaceID, const PHLMONITOR& destinationMonitor) {
     if (sourceWorkspaceID == WORKSPACE_INVALID)
         return {.success = false, .error = "selected workspace is empty"};
 
-    const auto focusState = Desktop::focusState();
-    const auto monitor    = focusState ? focusState->monitor() : State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run();
-    if (!monitor || !monitor->m_activeWorkspace)
+    if (!destinationMonitor || !destinationMonitor->m_activeWorkspace)
         return {.success = false, .error = "no active monitor/workspace"};
 
-    if (sourceWorkspaceID == monitor->activeWorkspaceID())
+    if (sourceWorkspaceID == destinationMonitor->activeWorkspaceID())
         return {};
 
     PHLWORKSPACE sourceWorkspace;
@@ -172,7 +170,8 @@ static SDispatchResult bringWindowFromWorkspace(int64_t sourceWorkspaceID) {
     if (!window)
         return {.success = false, .error = "selected workspace has no mapped windows"};
 
-    Desktop::globalWindowController()->moveWindowToWorkspace(window, monitor->m_activeWorkspace);
+    Desktop::globalWindowController()->moveWindowToWorkspace(window, destinationMonitor->m_activeWorkspace);
+    const auto focusState = Desktop::focusState();
     if (focusState)
         focusState->fullWindowFocus(window, Desktop::FOCUS_REASON_KEYBIND);
     window->warpCursor();
@@ -459,7 +458,7 @@ static SDispatchResult onExpoDispatcher(std::string arg) {
         return changeToSingleDigitWorkspace(arg);
 
     if (arg == "select") {
-        if (auto* const OV = activeOverview()) {
+        if (auto* const OV = overviewForGlobalPoint(g_pInputManager->getMouseCoordsInternal())) {
             if (OV->selectHoveredWorkspace())
                 closeOverviewsSelecting(OV);
         }
@@ -467,10 +466,11 @@ static SDispatchResult onExpoDispatcher(std::string arg) {
     }
 
     if (arg == "bring") {
-        if (auto* const OV = activeOverview()) {
+        if (auto* const OV = overviewForGlobalPoint(g_pInputManager->getMouseCoordsInternal())) {
             if (!OV->selectHoveredWorkspace())
                 return {.success = false, .error = "no workspace under pointer"};
-            const auto result = bringWindowFromWorkspace(OV->selectedWorkspaceID());
+            const auto DESTINATION = OV->pMonitor.lock();
+            const auto result = bringWindowFromWorkspace(OV->selectedWorkspaceID(), DESTINATION);
             closeOverviews(false);
             return result;
         }
