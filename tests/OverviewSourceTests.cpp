@@ -219,8 +219,23 @@ int main() {
     expect(byPoint.find("if (!OV)") < byPoint.find("OV->pMonitor"), "point lookup skips null registry slots before dereference");
     expect(source.find("if (OV)\n            snapshot.push_back(OV.get());") != std::string::npos,
            "safe registry snapshots never publish null overview pointers");
-    expect(interactionSource.find("overviewRegistered(this)") != std::string::npos && interactionSource.find("activeOverview() != this") == std::string::npos,
-           "settle timer liveness uses exact registry membership instead of active ownership");
+    expect(interactionSource.find("activeOverview() != this") == std::string::npos,
+           "settle timer liveness never depends on whichever overview currently owns keyboard input");
+
+    const auto redrawTimer = extractFunction(interactionSource, "void COverview::redrawDraggedWindowTile(int id) {");
+    expect(redrawTimer.find("[this]") == std::string::npos,
+           "settle timer callbacks never capture a raw overview pointer");
+    expect(redrawTimer.find("const auto OVERVIEWKEY = overviewMonitorKey(") != std::string::npos && redrawTimer.find("[OVERVIEWKEY]") != std::string::npos &&
+               redrawTimer.find("overviewForMonitorKey(OVERVIEWKEY)") != std::string::npos,
+           "settle timer callbacks re-resolve their overview by stable monitor key on every tick");
+    expect(redrawTimer.find("OVERVIEW->redrawSettleTimer.get() != self.get()") != std::string::npos,
+           "a timer cannot mutate a replacement overview registered on the same monitor");
+
+    const auto overviewDestructor = extractFunction(source, "COverview::~COverview() {");
+    const auto cancelTimerPos     = overviewDestructor.find("redrawSettleTimer->cancel();");
+    const auto restoreCursorPos   = overviewDestructor.find("Pointer::Cursor::overrideController->unsetOverride");
+    expect(cancelTimerPos != std::string::npos && restoreCursorPos != std::string::npos && cancelTimerPos < restoreCursorPos,
+           "overview teardown cancels and detaches settle timers before cursor restoration can re-enter callbacks");
 
     const auto headerSource = readFile("Overview.hpp");
     expect(headerSource.find("dragStartLocal") == std::string::npos && headerSource.find("dragSourceID") == std::string::npos && headerSource.find("dragWindow") == std::string::npos,
