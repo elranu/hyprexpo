@@ -321,11 +321,13 @@ bool COverview::finishWindowDrag() {
             if (TARGETWS && TARGETWS->m_monitor.lock() != TARGETMON)
                 Log::logger->log(Log::ERR, "[hyprexpo] rejected drag target workspace on the wrong monitor");
             else if (windowVisibleOnWorkspace(g_overviewDrag.window, SOURCEWS) && TARGETWS && TARGETWS != SOURCEWS) {
+                const int64_t SOURCEWORKSPACEID = SOURCEOV->images[SOURCE].workspaceID;
+                const int64_t TARGETWORKSPACEID = TARGETOV->images[TARGET].workspaceID;
                 SOURCEOV->images[SOURCE].pWorkspace = SOURCEWS;
                 Desktop::globalWindowController()->moveWindowToWorkspace(g_overviewDrag.window, TARGETWS);
                 settleWorkspaceMoveAnimation(g_overviewDrag.window);
-                SOURCEOV->redrawDraggedWindowTile(SOURCE);
-                TARGETOV->redrawDraggedWindowTile(TARGET);
+                SOURCEOV->redrawDraggedWorkspace(SOURCEWORKSPACEID);
+                TARGETOV->redrawDraggedWorkspace(TARGETWORKSPACEID);
             }
         }
     }
@@ -381,22 +383,24 @@ bool COverview::moveWindowBetweenVisibleIndices(size_t sourceIndex, size_t targe
         return false;
 
     images[SOURCE].pWorkspace = SOURCEWS;
+    const int64_t SOURCEWORKSPACEID = images[SOURCE].workspaceID;
+    const int64_t TARGETWORKSPACEID = images[TARGET].workspaceID;
     Desktop::globalWindowController()->moveWindowToWorkspace(window, TARGETWS);
     settleWorkspaceMoveAnimation(window);
-    redrawDraggedWindowTile(SOURCE);
-    redrawDraggedWindowTile(TARGET);
+    redrawDraggedWorkspace(SOURCEWORKSPACEID);
+    redrawDraggedWorkspace(TARGETWORKSPACEID);
     return true;
 }
 
-void COverview::redrawDraggedWindowTile(int id) {
-    queueRedrawID(id);
+void COverview::redrawDraggedWorkspace(int64_t workspaceID) {
+    if (workspaceID == WORKSPACE_INVALID)
+        return;
 
-    for (const auto id : queuedRedrawIDs) {
-        if (std::find(settlingRedrawIDs.begin(), settlingRedrawIDs.end(), id) == settlingRedrawIDs.end())
-            settlingRedrawIDs.push_back(id);
-    }
-    redrawSettleTicks = 4;
+    if (std::find(settlingRedrawWorkspaceIDs.begin(), settlingRedrawWorkspaceIDs.end(), workspaceID) == settlingRedrawWorkspaceIDs.end())
+        settlingRedrawWorkspaceIDs.push_back(workspaceID);
+    redrawSettleTicks = 8;
 
+    queueRedrawID(tileForWorkspaceID(workspaceID));
     flushQueuedRedraws();
 
     if (redrawSettleTimer)
@@ -420,13 +424,13 @@ void COverview::redrawDraggedWindowTile(int id) {
                 return;
             }
 
-            for (const auto id : OVERVIEW->settlingRedrawIDs)
-                OVERVIEW->queueRedrawID(id);
+            for (const auto workspaceID : OVERVIEW->settlingRedrawWorkspaceIDs)
+                OVERVIEW->queueRedrawID(OVERVIEW->tileForWorkspaceID(workspaceID));
 
             OVERVIEW->flushQueuedRedraws();
 
             if (--OVERVIEW->redrawSettleTicks <= 0) {
-                OVERVIEW->settlingRedrawIDs.clear();
+                OVERVIEW->settlingRedrawWorkspaceIDs.clear();
                 OVERVIEW->redrawSettleTimer.reset();
                 self->cancel();
                 return;
@@ -457,6 +461,8 @@ void COverview::flushQueuedRedraws() {
         redrawID(id);
 
     damage();
+    if (const auto MON = pMonitor.lock())
+        MON->scheduleFrame();
 }
 
 bool COverview::selectVisibleToken(const std::string& token) {

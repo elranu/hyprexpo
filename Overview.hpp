@@ -112,7 +112,7 @@ class COverview {
     void       beginWindowDrag();
     bool       finishWindowDrag();
     void       updateWindowDrag();
-    void       redrawDraggedWindowTile(int id);
+    void       redrawDraggedWorkspace(int64_t workspaceID);
     void       queueRedrawID(int id);
     void       flushQueuedRedraws();
     PHLWINDOW  windowAtTilePoint(int id, const Vector2D& localPoint) const;
@@ -138,7 +138,7 @@ class COverview {
     bool                         submapActive = false;
 
     std::vector<int>             queuedRedrawIDs;
-    std::vector<int>             settlingRedrawIDs;
+    std::vector<int64_t>         settlingRedrawWorkspaceIDs;
     int                          redrawSettleTicks = 0;
     SP<CEventLoopTimer>          redrawSettleTimer;
 
