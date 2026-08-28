@@ -183,6 +183,8 @@ void COverview::beginWindowDrag() {
 
     std::vector<Hyprexpo::SGlobalTile> tiles;
     for (const auto& OV : g_overviews) {
+        if (!OV)
+            continue;
         auto overviewTiles = OV->globalTiles();
         tiles.insert(tiles.end(), overviewTiles.begin(), overviewTiles.end());
     }
@@ -240,6 +242,8 @@ void COverview::updateWindowDrag() {
 
     std::vector<Hyprexpo::SGlobalTile> tiles;
     for (const auto& OV : g_overviews) {
+        if (!OV)
+            continue;
         auto overviewTiles = OV->globalTiles();
         tiles.insert(tiles.end(), overviewTiles.begin(), overviewTiles.end());
     }

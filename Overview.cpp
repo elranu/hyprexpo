@@ -635,6 +635,8 @@ bool COverview::ownsAnimVar(const WP<Hyprutils::Animation::CBaseAnimatedVariable
 
 COverview* overviewForAnimVar(const WP<Hyprutils::Animation::CBaseAnimatedVariable>& var) {
     for (const auto& OV : g_overviews) {
+        if (!OV)
+            continue;
         if (OV->ownsAnimVar(var))
             return OV.get();
     }
@@ -647,6 +649,8 @@ COverview* overviewForMonitor(const PHLMONITOR& monitor) {
         return nullptr;
 
     for (const auto& OV : g_overviews) {
+        if (!OV)
+            continue;
         if (OV->pMonitor == monitor)
             return OV.get();
     }
@@ -663,6 +667,8 @@ COverview* overviewForMonitorKey(uint64_t key) {
         return nullptr;
 
     for (const auto& OV : g_overviews) {
+        if (!OV)
+            continue;
         const auto MON = OV->pMonitor.lock();
         if (overviewMonitorKey(MON) == key)
             return OV.get();
@@ -673,6 +679,8 @@ COverview* overviewForMonitorKey(uint64_t key) {
 
 COverview* overviewForGlobalPoint(const Vector2D& point) {
     for (const auto& OV : g_overviews) {
+        if (!OV)
+            continue;
         const auto MON = OV->pMonitor.lock();
         if (!MON)
             continue;
@@ -698,7 +706,7 @@ COverview* createOverview(const PHLMONITOR& monitor, bool swipe) {
 }
 
 bool overviewOpen() {
-    return !g_overviews.empty();
+    return std::any_of(g_overviews.begin(), g_overviews.end(), [](const auto& entry) { return static_cast<bool>(entry); });
 }
 
 COverview* activeOverview() {
@@ -719,7 +727,8 @@ COverview* activeOverview() {
     if (auto* const HOVERED = overviewForMonitor(State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run()))
         return HOVERED;
 
-    return g_overviews.front().get();
+    const auto FIRST = std::find_if(g_overviews.begin(), g_overviews.end(), [](const auto& entry) { return static_cast<bool>(entry); });
+    return FIRST == g_overviews.end() ? nullptr : FIRST->get();
 }
 
 std::optional<Hyprexpo::SGlobalTile> COverview::focusedGlobalTile() const {
@@ -775,6 +784,8 @@ bool moveOverviewFocusAcrossMonitors(COverview* source, Hyprexpo::EDirection dir
 
     std::vector<Hyprexpo::SGlobalTile> candidates;
     for (const auto& OV : g_overviews) {
+        if (!OV)
+            continue;
         if (OV.get() == source)
             continue;
         auto tiles = OV->globalTiles();
@@ -797,8 +808,10 @@ bool moveOverviewFocusAcrossMonitors(COverview* source, Hyprexpo::EDirection dir
 void forEachOverview(const std::function<void(COverview&)>& fn) {
     std::vector<COverview*> snapshot;
     snapshot.reserve(g_overviews.size());
-    for (const auto& OV : g_overviews)
-        snapshot.push_back(OV.get());
+    for (const auto& OV : g_overviews) {
+        if (OV)
+            snapshot.push_back(OV.get());
+    }
 
     for (auto* const OV : snapshot) {
         // fn may tear down overviews, including this one. Skip dead entries
@@ -814,8 +827,10 @@ void forEachOverview(const std::function<void(COverview&)>& fn) {
 std::vector<uint64_t> liveOverviewMonitorKeys() {
     std::vector<uint64_t> keys;
     keys.reserve(g_overviews.size());
-    for (const auto& OV : g_overviews)
-        keys.push_back(overviewMonitorKey(OV->pMonitor.lock()));
+    for (const auto& OV : g_overviews) {
+        if (OV)
+            keys.push_back(overviewMonitorKey(OV->pMonitor.lock()));
+    }
     return keys;
 }
 
@@ -857,17 +872,27 @@ void destroyOverview(COverview* overview) {
     if (!overview)
         return;
 
+    const auto IT = std::find_if(g_overviews.begin(), g_overviews.end(), [overview](const auto& entry) { return entry && entry.get() == overview; });
+    if (IT == g_overviews.end())
+        return;
+
     const auto MON = overview->pMonitor.lock();
     resetOverviewDrag(Hyprexpo::EOverviewDragEventType::MonitorDestroyed, overviewMonitorKey(MON));
     if (g_keyboardOverviewMonitor.lock() == MON)
         g_keyboardOverviewMonitor.reset();
-    std::erase_if(g_overviews, [overview](const auto& entry) { return entry.get() == overview; });
+
+    auto OWNER = std::move(*IT);
+    g_overviews.erase(IT);
+    OWNER.reset();
 }
 
 void destroyAllOverviews() {
     resetOverviewDrag(Hyprexpo::EOverviewDragEventType::AllClose);
     g_keyboardOverviewMonitor.reset();
-    g_overviews.clear();
+
+    std::vector<std::unique_ptr<COverview>> OWNERS;
+    OWNERS.swap(g_overviews);
+    OWNERS.clear();
 }
 
 void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
