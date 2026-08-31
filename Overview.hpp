@@ -136,6 +136,7 @@ class COverview {
     int                          kbFocusID = -1;
     int                          hoveredID = -1;
     bool                         submapActive = false;
+    std::string                  previousSubmap = "";
 
     std::vector<int>             queuedRedrawIDs;
     std::vector<int64_t>         settlingRedrawWorkspaceIDs;

@@ -9,6 +9,7 @@
 #include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <algorithm>
@@ -734,27 +735,41 @@ void COverview::onSwipeEnd() {
 // independently. Refcount it so opening on several monitors installs it once
 // and only the last overview to close tears it down: without this the first
 // monitor to close would drop keyboard navigation for the ones still open.
-static int g_submapRefs = 0;
+static int         g_submapRefs     = 0;
+static std::string g_previousSubmap = "";
 
 void COverview::enterSubmapIfEnabled() {
     static auto* const* PKEYNAV = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprexpo:keynav_enable")->getDataStaticPtr();
     if (!**PKEYNAV || submapActive)
         return;
 
-    submapActive = true;
     if (g_submapRefs++ == 0) {
+        // remember whatever submap was active so we can restore it exactly on close, instead
+        // of always dropping back to Hyprland's bare default submap. Configs that nest their
+        // entire keybind set inside a named submap (a common pattern for e.g. a "disable all
+        // keybinds" toggle) would otherwise get silently kicked out of it every time the
+        // overview closes.
+        //
+        // The capture is global, not per-overview: only the first overview to open sees
+        // the user's real submap. The others would capture "hyprexpo" and restore that.
+        previousSubmap = g_pKeybindManager->getCurrentSubmap().name;
+        g_previousSubmap = previousSubmap;
         // switch to a dedicated submap for hyprexpo navigation
         (void)Config::Actions::setSubmap("hyprexpo");
     }
+    submapActive = true;
 }
 
 void COverview::resetSubmapIfNeeded() {
     if (!submapActive)
         return;
 
-    submapActive = false;
     if (--g_submapRefs <= 0) {
         g_submapRefs = 0;
-        (void)Config::Actions::setSubmap("reset");
+        // Restore what was captured on the way in, not this instance's copy: the overview
+        // that closes last is not necessarily the one that opened first.
+        previousSubmap = g_previousSubmap;
+        (void)Config::Actions::setSubmap(previousSubmap);
     }
+    submapActive = false;
 }
