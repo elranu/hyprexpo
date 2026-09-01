@@ -228,11 +228,23 @@ void COverview::close(bool switchToSelection) {
         // which case some tiles will be left with this ID intentionally.
         const int  NEWID = TILE.workspaceID == WORKSPACE_INVALID ? getWorkspaceIDNameFromString("emptynm").id : TILE.workspaceID;
 
+        // A tile can name a workspace that does not exist yet -- an anchored
+        // grid (workspace_method "<output> first N") lays out max_workspace
+        // slots whether or not those workspaces have ever been opened. Reuse
+        // the same helper the drag paths use: it returns the existing
+        // workspace or creates it. Without this, selecting such a tile fell
+        // through to changeWorkspace(id), which cannot create one, and the
+        // selection silently did nothing.
         PHLWORKSPACE NEWIDWS;
-        for (const auto& w : State::workspaceState()->workspacesCopy()) {
-            if (w->m_id == NEWID) {
-                NEWIDWS = w;
-                break;
+        if (TILE.workspaceID != WORKSPACE_INVALID)
+            NEWIDWS = ensureWorkspaceForTile(SAFEID);
+
+        if (!NEWIDWS) {
+            for (const auto& w : State::workspaceState()->workspacesCopy()) {
+                if (w->m_id == NEWID) {
+                    NEWIDWS = w;
+                    break;
+                }
             }
         }
 

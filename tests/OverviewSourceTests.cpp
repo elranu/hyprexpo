@@ -328,6 +328,19 @@ int main() {
     expect(closeOverview.find("resetSubmapIfNeeded();") != std::string::npos,
            "normal overview close restores the captured submap");
 
+    // An anchored grid (workspace_method "<output> first N") lays out
+    // max_workspace slots whether or not those workspaces exist. Selecting a
+    // tile for one that has never been opened must create it: changeWorkspace()
+    // cannot, and the selection used to silently do nothing.
+    const auto ensureTileWsPos = closeOverview.find("ensureWorkspaceForTile(SAFEID)");
+    const auto changeWsPos     = closeOverview.find("MON->changeWorkspace(");
+    expect(ensureTileWsPos != std::string::npos,
+           "selection resolves the tile's workspace through the creating helper");
+    expect(changeWsPos != std::string::npos && ensureTileWsPos < changeWsPos,
+           "the tile's workspace is created before the monitor is switched to it");
+    expect(closeOverview.find("if (TILE.workspaceID != WORKSPACE_INVALID)") != std::string::npos,
+           "a WORKSPACE_INVALID tile still falls back to the next empty workspace");
+
     // overviewDestructor is already extracted above, next to the settle-timer checks.
     expect(!overviewDestructor.empty(), "overview destructor exists");
     expect(overviewDestructor.find("resetSubmapIfNeeded();") != std::string::npos,
