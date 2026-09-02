@@ -561,6 +561,11 @@ void COverview::setClosing(bool closing_) {
     closing = closing_;
 }
 
+void COverview::beginCancelSwipe() {
+    closeOnID = openedID;
+    closing   = true;
+}
+
 void COverview::onWindowMoveToWorkspace(const PHLWINDOW& window, const PHLWORKSPACE& workspace) {
     if (!closing || externalWorkspaceMoveDuringClose || !window)
         return;
@@ -618,7 +623,7 @@ void COverview::onSwipeUpdate(double delta) {
     pos->setValueAndWarp(lerp(POSMIN, POSMAX, PERC));
 }
 
-void COverview::onSwipeEnd() {
+void COverview::onSwipeEnd(bool switchToSelection) {
     if (m_closeCommitted)
         return;
 
@@ -635,12 +640,12 @@ void COverview::onSwipeEnd() {
     const auto SIZEMAX = zoomSizeForCurrentGrid(MON->m_size);
     const auto span    = SIZEMAX - SIZEMIN;
     if (std::abs(span.x) <= 1e-6) {
-        close();
+        close(switchToSelection);
         return;
     }
     const auto PERC    = (size->value() - SIZEMIN).x / span.x;
     if (PERC > 0.5) {
-        close();
+        close(switchToSelection);
         return;
     }
     *size = MON->m_size;
