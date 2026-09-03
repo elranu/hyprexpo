@@ -19,7 +19,15 @@ void CExpoGesture::begin(const ITrackpadGesture::STrackpadGestureBegin& e) {
 
     m_monitor = monitor;
 
-    auto* const OV = overviewForMonitor(monitor);
+    auto* const OV = overview();
+    if (m_action == EExpoGestureAction::Cancel) {
+        if (!OV || OV->closeCommitted())
+            return;
+
+        OV->beginCancelSwipe();
+        return;
+    }
+
     if (!OV)
         createOverview(monitor, true);
     else if (!OV->closeCommitted()) {
@@ -56,7 +64,7 @@ void CExpoGesture::end(const ITrackpadGesture::STrackpadGestureEnd& e) {
         return;
 
     OV->setClosing(false);
-    OV->onSwipeEnd();
+    OV->onSwipeEnd(m_action == EExpoGestureAction::Expo);
     // onSwipeEnd can tear the overview down, so re-resolve before touching it.
     if (auto* const STILL_ALIVE = overview())
         STILL_ALIVE->resetSwipe();

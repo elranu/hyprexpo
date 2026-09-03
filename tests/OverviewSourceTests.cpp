@@ -99,6 +99,12 @@ int main() {
 
     const auto dispatchersSource = readFile("Dispatchers.cpp");
     expect(!dispatchersSource.empty(), "Dispatchers.cpp can be read from repo root");
+    const auto gestureHeader = readFile("ExpoGesture.hpp");
+    expect(!gestureHeader.empty(), "ExpoGesture.hpp can be read from repo root");
+    const auto gestureSource = readFile("ExpoGesture.cpp");
+    expect(!gestureSource.empty(), "ExpoGesture.cpp can be read from repo root");
+    const auto overviewHeader = readFile("Overview.hpp");
+    expect(!overviewHeader.empty(), "Overview.hpp can be read from repo root");
     const auto expoDispatcher = extractFunction(dispatchersSource, "static SDispatchResult onExpoDispatcher(std::string arg) {");
     expect(!expoDispatcher.empty(), "expo dispatcher function exists");
 
@@ -141,10 +147,16 @@ int main() {
 
     const auto enterSubmap = extractFunction(interactionSource, "void COverview::enterSubmapIfEnabled() {");
     expect(!enterSubmap.empty(), "keyboard navigation submap entry function exists");
-    const auto captureSubmapPos = enterSubmap.find("previousSubmap = g_pKeybindManager->getCurrentSubmap().name;");
+    const auto captureSubmapPos = enterSubmap.find("previousSubmap = std::string{Keybinds::mgr()->currentSubmap()};");
+    const auto firstSubmapRef   = enterSubmap.find("if (g_submapRefs++ == 0)");
+    const auto shareSubmapPos   = enterSubmap.find("g_previousSubmap = previousSubmap;", captureSubmapPos);
     const auto enterSubmapPos   = enterSubmap.find("Config::Actions::setSubmap(\"hyprexpo\");");
     const auto activateGuardPos = enterSubmap.find("submapActive = true;");
     expect(captureSubmapPos != std::string::npos, "submap entry captures the exact active Hyprland submap");
+    expect(firstSubmapRef != std::string::npos && firstSubmapRef < captureSubmapPos,
+           "only the first overview in a multi-monitor session captures the active submap");
+    expect(shareSubmapPos != std::string::npos && captureSubmapPos < shareSubmapPos,
+           "the first overview publishes the captured submap for the whole overview session");
     expect(enterSubmapPos != std::string::npos, "submap entry switches to the hyprexpo navigation submap");
     expect(activateGuardPos != std::string::npos, "submap entry marks the navigation submap active");
     expect(captureSubmapPos < enterSubmapPos, "active submap capture happens before entering hyprexpo");
@@ -152,13 +164,18 @@ int main() {
 
     const auto resetSubmap = extractFunction(interactionSource, "void COverview::resetSubmapIfNeeded() {");
     expect(!resetSubmap.empty(), "keyboard navigation submap reset function exists");
+    const auto lastSubmapRef    = resetSubmap.find("if (--g_submapRefs <= 0)");
+    const auto sharedRestorePos = resetSubmap.find("previousSubmap = g_previousSubmap;");
     const auto restoreSubmapPos = resetSubmap.find("Config::Actions::setSubmap(previousSubmap);");
     const auto clearGuardPos    = resetSubmap.find("submapActive = false;");
+    expect(lastSubmapRef != std::string::npos && sharedRestorePos != std::string::npos && lastSubmapRef < sharedRestorePos,
+           "only the last overview restores the session-global captured submap");
     expect(restoreSubmapPos != std::string::npos, "submap reset restores the exact captured submap");
     expect(resetSubmap.find("Config::Actions::setSubmap(\"reset\");") == std::string::npos,
            "submap reset never hardcodes Hyprland's default submap");
     expect(clearGuardPos != std::string::npos, "submap reset clears the active guard");
-    expect(restoreSubmapPos < clearGuardPos, "captured submap restoration happens before clearing the active guard");
+    expect(sharedRestorePos < restoreSubmapPos && restoreSubmapPos < clearGuardPos,
+           "shared captured submap restoration happens before clearing the active guard");
 
     const auto numberSelection = extractFunction(interactionSource, "bool COverview::onKbSelectNumber(int num) {");
     expect(!numberSelection.empty(), "workspace-number dispatcher selection function exists");
@@ -374,11 +391,146 @@ int main() {
     const auto gestureSync = extractFunction(dispatchersSource, "void syncExpoGestureFromConfig(");
     expect(!gestureSync.empty(), "syncExpoGestureFromConfig exists");
     expect(gestureSync.find("g_unloading || g_gestureRegistrationDisabled") != std::string::npos, "gesture sync bails out while the plugin is unloading");
+    expect(gestureSync.find("registerExpoGesture(FINGERS, DIR, \"expo\"") != std::string::npos,
+           "plain config synchronization remains expo-only");
 
     const auto gestureRegister = extractFunction(dispatchersSource, "static SDispatchResult registerExpoGesture(");
     expect(!gestureRegister.empty(), "registerExpoGesture definition exists");
     expect(gestureRegister.find("g_unloading || g_gestureRegistrationDisabled") != std::string::npos,
            "every gesture registration path, including the Lua helper, is fenced during unload");
+    expect(gestureRegister.find("action == \"expo\"") != std::string::npos &&
+               gestureRegister.find("makeUnique<CExpoGesture>(EExpoGestureAction::Expo)") != std::string::npos,
+           "Lua expo registration constructs an explicit expo gesture");
+    expect(gestureRegister.find("action == \"cancel\"") != std::string::npos &&
+               gestureRegister.find("makeUnique<CExpoGesture>(EExpoGestureAction::Cancel)") != std::string::npos,
+           "Lua cancel registration constructs an explicit cancel gesture");
+    expect(gestureRegister.find("expected expo|cancel|unset") != std::string::npos,
+           "invalid Lua gesture actions report the complete accepted set");
+
+    expect(gestureHeader.find("enum class EExpoGestureAction") != std::string::npos,
+           "gesture action modes use an explicit enum");
+    expect(gestureHeader.find("CExpoGesture(EExpoGestureAction action)") != std::string::npos,
+           "gesture construction requires an explicit action");
+    expect(gestureHeader.find("\n    CExpoGesture()") == std::string::npos,
+           "gesture construction cannot silently default an action");
+    expect(gestureHeader.find("const EExpoGestureAction m_action") != std::string::npos,
+           "each gesture retains an immutable action mode");
+    expect(gestureHeader.find("COverview*    overview() const;") != std::string::npos &&
+               gestureHeader.find("PHLMONITORREF m_monitor;") != std::string::npos,
+           "each gesture retains an origin-monitor lookup instead of a singleton overview pointer");
+
+    const auto gestureBegin = extractFunction(gestureSource, "void CExpoGesture::begin(");
+    expect(!gestureBegin.empty(), "gesture begin function exists");
+    const auto monitorQueryStart = gestureBegin.find("const auto monitor");
+    const auto monitorCapture    = gestureBegin.find("m_monitor = monitor;", monitorQueryStart);
+    const auto overviewResolve   = gestureBegin.find("auto* const OV = overview();", monitorCapture);
+    const auto cancelBeginStart = gestureBegin.find("if (m_action == EExpoGestureAction::Cancel)");
+    const auto expoBeginStart   = gestureBegin.find("\n    if (!OV)\n", cancelBeginStart);
+    const auto cancelBeginBlock = cancelBeginStart == std::string::npos || expoBeginStart == std::string::npos ? std::string{} :
+                                                                                                               gestureBegin.substr(cancelBeginStart, expoBeginStart - cancelBeginStart);
+    expect(monitorQueryStart != std::string::npos && monitorCapture != std::string::npos && overviewResolve != std::string::npos && cancelBeginStart != std::string::npos &&
+               monitorQueryStart < monitorCapture && monitorCapture < overviewResolve && overviewResolve < cancelBeginStart,
+           "gesture begin captures and resolves its origin monitor before either action runs");
+    expect(cancelBeginBlock.find("!OV || OV->closeCommitted()") != std::string::npos,
+           "cancel begin is inert without a mutable overview");
+    expect(cancelBeginBlock.find("OV->beginCancelSwipe()") != std::string::npos,
+           "cancel begin delegates target reset and interactive closing to the overview");
+    expect(cancelBeginBlock.find("selectHoveredWorkspace") == std::string::npos && cancelBeginBlock.find("createOverview") == std::string::npos,
+           "cancel begin neither selects a hovered workspace nor creates an overview");
+    expect(overviewHeader.find("void beginCancelSwipe();") != std::string::npos,
+           "overview exposes an owned cancel-begin transition");
+    const auto cancelSwipeBegin = extractFunction(interactionSource, "void COverview::beginCancelSwipe(");
+    expect(!cancelSwipeBegin.empty(), "overview cancel-begin transition exists");
+    const auto resetCancelTarget = cancelSwipeBegin.find("closeOnID = openedID");
+    const auto startCancelClose  = cancelSwipeBegin.find("closing", resetCancelTarget);
+    const auto enableCancelClose = cancelSwipeBegin.find("= true", startCancelClose);
+    expect(resetCancelTarget != std::string::npos && startCancelClose != std::string::npos && enableCancelClose != std::string::npos && resetCancelTarget < startCancelClose,
+           "cancel begin replaces any aborted expo target with the opening workspace before closing");
+    const auto expoBeginBlock = expoBeginStart == std::string::npos ? std::string{} : gestureBegin.substr(expoBeginStart);
+    expect(expoBeginBlock.find("createOverview(monitor, true)") != std::string::npos &&
+               expoBeginBlock.find("OV->selectHoveredWorkspace()") != std::string::npos &&
+               expoBeginBlock.find("OV->setClosing(true)") != std::string::npos,
+           "expo begin retains open and hovered-selection close behavior");
+
+    const auto gestureOverview = extractFunction(gestureSource, "COverview* CExpoGesture::overview() const {");
+    expect(gestureOverview.find("overviewForMonitor(m_monitor.lock())") != std::string::npos,
+           "gesture callbacks re-resolve only the overview owned by the captured origin monitor");
+
+    const auto gestureUpdate = extractFunction(gestureSource, "void CExpoGesture::update(");
+    expect(gestureUpdate.find("auto* const OV = overview();") != std::string::npos &&
+               gestureUpdate.find("!OV || OV->closeCommitted()") != std::string::npos,
+           "gesture updates re-resolve the origin overview and ignore committed closes");
+    const auto firstUpdateGuard = gestureUpdate.find("if (m_firstUpdate)");
+    const auto accumulateDelta  = gestureUpdate.find("m_lastDelta += distance(e);");
+    expect(firstUpdateGuard != std::string::npos && accumulateDelta != std::string::npos && firstUpdateGuard < accumulateDelta,
+           "gesture updates discard the first compositor delta before accumulating movement");
+
+    const auto gestureEnd = extractFunction(gestureSource, "void CExpoGesture::end(");
+    expect(!gestureEnd.empty(), "gesture end function exists");
+    expect(gestureEnd.find("auto* const OV = overview();") != std::string::npos &&
+               gestureEnd.find("!OV || OV->closeCommitted()") != std::string::npos,
+           "gesture end re-resolves the origin overview and ignores committed closes");
+    expect(gestureEnd.find("OV->setClosing(false)") != std::string::npos,
+           "gesture end clears transient closing before threshold evaluation");
+    expect(gestureEnd.find("OV->onSwipeEnd(m_action == EExpoGestureAction::Expo)") != std::string::npos,
+           "gesture completion selects only for the expo action");
+    expect(gestureEnd.find("if (auto* const STILL_ALIVE = overview())") != std::string::npos &&
+               gestureEnd.find("STILL_ALIVE->resetSwipe()") != std::string::npos,
+           "gesture completion re-resolves the origin overview before its post-close reset");
+
+    const auto swipeEnd = extractFunction(interactionSource, "void COverview::onSwipeEnd(");
+    expect(!swipeEnd.empty(), "overview swipe-end function exists");
+    expect(swipeEnd.find("void COverview::onSwipeEnd(bool switchToSelection)") != std::string::npos,
+           "overview swipe completion accepts the selection decision");
+    const auto degenerateSpanStart = swipeEnd.find("if (std::abs(span.x) <= 1e-6)");
+    const auto thresholdStart = swipeEnd.find("if (PERC > 0.5)", degenerateSpanStart);
+    const auto incompleteStart = swipeEnd.find("*size = MON->m_size", thresholdStart);
+    const auto degenerateSpanBlock = degenerateSpanStart == std::string::npos || thresholdStart == std::string::npos ? std::string{} :
+                                                                                                                       swipeEnd.substr(degenerateSpanStart, thresholdStart - degenerateSpanStart);
+    const auto thresholdBlock = thresholdStart == std::string::npos || incompleteStart == std::string::npos ? std::string{} :
+                                                                                                               swipeEnd.substr(thresholdStart, incompleteStart - thresholdStart);
+    const auto incompleteBlock = incompleteStart == std::string::npos ? std::string{} : swipeEnd.substr(incompleteStart);
+    expect(degenerateSpanBlock.find("close(switchToSelection)") != std::string::npos &&
+               thresholdBlock.find("close(switchToSelection)") != std::string::npos,
+           "completed swipe paths forward the action-specific selection choice");
+    expect(incompleteBlock.find("*pos  = {0, 0}") != std::string::npos &&
+               incompleteBlock.find("swipeWasCommenced = true") != std::string::npos &&
+               incompleteBlock.find("m_isSwiping       = false") != std::string::npos &&
+               incompleteBlock.find("close(") == std::string::npos,
+           "incomplete swipe still resets animation state and leaves the overview open");
+
+    expect(source.find("#include <hyprland/src/desktop/view/window/Window.hpp>") != std::string::npos &&
+               source.find("#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>") != std::string::npos &&
+               source.find("#include <hyprland/src/desktop/view/Window.hpp>") == std::string::npos,
+           "overview capture uses the current Hyprland window and presentation headers");
+    expect(source.find("window->mapped()") != std::string::npos &&
+               source.find("Desktop::View::WINDOW_STATE_PINNED") != std::string::npos &&
+               source.find("window->presentation().alpha(") != std::string::npos &&
+               source.find("window->presentation().movingFromMonitor()") != std::string::npos &&
+               source.find("window->presentation().resetMonitorMovedFrom()") != std::string::npos,
+           "overview capture uses current mapped, pinned, alpha, and moved-monitor APIs");
+    expect(source.find("m_isMapped") == std::string::npos && source.find("->m_pinned") == std::string::npos &&
+               source.find("->m_monitorMovedFrom") == std::string::npos,
+           "overview capture does not reintroduce removed Hyprland window members");
+
+    const auto applyPinnedState = extractFunction(source, "std::vector<SPinnedWindowPreviewState> applyPinnedWindowPreviewState(");
+    const auto restorePinnedState = extractFunction(source, "void restorePinnedWindowPreviewState(");
+    expect(applyPinnedState.find("window->m_state &= ~Desktop::View::WINDOW_STATE_PINNED") != std::string::npos &&
+               applyPinnedState.find("window->m_workspace.reset()") != std::string::npos,
+           "pinned preview suppression clears only the pinned bit and temporarily detaches the workspace");
+    expect(restorePinnedState.find("state.window->m_workspace = state.workspace") != std::string::npos &&
+               restorePinnedState.find("state.window->m_state |= Desktop::View::WINDOW_STATE_PINNED") != std::string::npos,
+           "pinned preview suppression restores workspace ownership and the saved pinned bit");
+
+    expect(dispatchersSource.find("Input::ModifierMask modMask") != std::string::npos &&
+               dispatchersSource.find("Keybinds::modMaskFromString(mods)") != std::string::npos &&
+               dispatchersSource.find("stringToModMask") == std::string::npos,
+           "gesture registration uses the current Hyprland modifier parser and mask type");
+    expect(interactionSource.find("#include <hyprland/src/keybinds/Manager.hpp>") != std::string::npos &&
+               interactionSource.find("Keybinds::mgr()->currentSubmap()") != std::string::npos &&
+               interactionSource.find("#include <hyprland/src/managers/KeybindManager.hpp>") == std::string::npos &&
+               interactionSource.find("g_pKeybindManager") == std::string::npos,
+           "submap ownership uses the current Hyprland keybind manager API");
 
     const auto exitFunction = extractFunction(mainSource, "APICALL EXPORT void PLUGIN_EXIT(");
     expect(!exitFunction.empty(), "PLUGIN_EXIT exists");

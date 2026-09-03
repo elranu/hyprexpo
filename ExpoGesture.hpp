@@ -5,9 +5,14 @@
 
 class COverview;
 
+enum class EExpoGestureAction {
+    Expo,
+    Cancel,
+};
+
 class CExpoGesture : public ITrackpadGesture {
   public:
-    CExpoGesture()          = default;
+    explicit CExpoGesture(EExpoGestureAction action) : m_action(action) {}
     virtual ~CExpoGesture() = default;
 
     virtual void begin(const ITrackpadGesture::STrackpadGestureBegin& e);
@@ -20,6 +25,7 @@ class CExpoGesture : public ITrackpadGesture {
     // Monitor the gesture started on, so update/end keep driving the same
     // overview even when other monitors have one open too.
     PHLMONITORREF m_monitor;
-    float         m_lastDelta   = 0.F;
-    bool          m_firstUpdate = false;
+    const EExpoGestureAction m_action;
+    float                    m_lastDelta   = 0.F;
+    bool                     m_firstUpdate = false;
 };

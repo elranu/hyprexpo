@@ -9,7 +9,7 @@
 #include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
-#include <hyprland/src/managers/KeybindManager.hpp>
+#include <hyprland/src/keybinds/Manager.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <algorithm>
@@ -640,6 +640,11 @@ void COverview::setClosing(bool closing_) {
     closing = closing_;
 }
 
+void COverview::beginCancelSwipe() {
+    closeOnID = openedID;
+    closing   = true;
+}
+
 void COverview::onWindowMoveToWorkspace(const PHLWINDOW& window, const PHLWORKSPACE& workspace) {
     if (!closing || externalWorkspaceMoveDuringClose || !window)
         return;
@@ -697,7 +702,7 @@ void COverview::onSwipeUpdate(double delta) {
     pos->setValueAndWarp(lerp(POSMIN, POSMAX, PERC));
 }
 
-void COverview::onSwipeEnd() {
+void COverview::onSwipeEnd(bool switchToSelection) {
     if (m_closeCommitted)
         return;
 
@@ -714,12 +719,12 @@ void COverview::onSwipeEnd() {
     const auto SIZEMAX = zoomSizeForCurrentGrid(MON->m_size);
     const auto span    = SIZEMAX - SIZEMIN;
     if (std::abs(span.x) <= 1e-6) {
-        close();
+        close(switchToSelection);
         return;
     }
     const auto PERC    = (size->value() - SIZEMIN).x / span.x;
     if (PERC > 0.5) {
-        close();
+        close(switchToSelection);
         return;
     }
     *size = MON->m_size;
@@ -752,7 +757,7 @@ void COverview::enterSubmapIfEnabled() {
         //
         // The capture is global, not per-overview: only the first overview to open sees
         // the user's real submap. The others would capture "hyprexpo" and restore that.
-        previousSubmap = g_pKeybindManager->getCurrentSubmap().name;
+        previousSubmap = std::string{Keybinds::mgr()->currentSubmap()};
         g_previousSubmap = previousSubmap;
         // switch to a dedicated submap for hyprexpo navigation
         (void)Config::Actions::setSubmap("hyprexpo");
